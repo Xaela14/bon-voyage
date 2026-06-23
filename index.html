@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bon Voyage ✈️</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#eef6f7;--bg-card:#fff;--accent:#1b7b8c;--accent-dark:#125a67;
+  --tp:#1d2b2e;--ts:#5b7378;--tm:#90a5a9;
+  --border:#bfe0e4;--bl:#dceef0;
+  --green:#2d7a3a;--green-bg:#e8f5ec;
+  --red:#c8392b;--red-bg:#fce8e6;
+  --amber:#b7720a;--amber-bg:#fdf3e3;
+  --r:10px;--rs:6px;
+}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--tp);font-size:14px}
+.page{display:none;min-height:100vh}
+.page.active{display:flex}
+.center-page{flex-direction:column;align-items:center;justify-content:center;padding:2rem;gap:1.4rem}
+h1{font-size:1.8rem;color:var(--accent-dark)}
+h2{font-size:1.25rem;color:var(--accent-dark)}
+p.sub{color:var(--ts)}
+.card{background:var(--bg-card);border:1.5px solid var(--bl);border-radius:var(--r);padding:1.5rem;max-width:420px;width:100%}
+.form-group{margin-bottom:1rem}
+.form-group label{display:block;font-size:.82rem;color:var(--ts);margin-bottom:.35rem;font-weight:500}
+.form-group input,.form-group select{width:100%;padding:.65rem .9rem;border:1.5px solid var(--bl);border-radius:var(--rs);font-size:.95rem;color:var(--tp);background:#fff;outline:none}
+.form-group input:focus,.form-group select:focus{border-color:var(--accent)}
+.btn{padding:.65rem 1.4rem;border-radius:var(--rs);font-size:.9rem;font-weight:600;cursor:pointer;border:none;width:100%;transition:.15s}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent-dark)}
+.btn-secondary{background:#fff;color:var(--accent-dark);border:1.5px solid var(--border)}
+.btn-secondary:hover{border-color:var(--accent)}
+.btn-link{background:none;border:none;color:var(--accent-dark);text-decoration:underline;cursor:pointer;font-size:.85rem}
+.row{display:flex;gap:.6rem}
+.row > *{flex:1}
+.error-msg{color:var(--red);font-size:.82rem;min-height:1.1rem}
+.tabs{display:flex;gap:.5rem;margin-bottom:1rem}
+.tab{flex:1;text-align:center;padding:.5rem;border-radius:var(--rs);cursor:pointer;color:var(--ts);font-weight:500}
+.tab.active{background:var(--accent);color:#fff}
+
+/* ===== APP SHELL ===== */
+#pg-app{flex-direction:column}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;background:var(--bg-card);border-bottom:1px solid var(--bl)}
+.topbar h1{font-size:1.3rem}
+.topbar .btn-link{font-size:.85rem}
+.content{flex:1;padding:1.5rem;max-width:900px;margin:0 auto;width:100%}
+.trip-grid{display:flex;flex-wrap:wrap;gap:1rem}
+.trip-card{background:var(--bg-card);border:1.5px solid var(--bl);border-radius:var(--r);padding:1.2rem;min-width:220px;cursor:pointer;transition:.15s}
+.trip-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.trip-card .code{font-size:.78rem;color:var(--tm);letter-spacing:.05em}
+.trip-card h3{margin-top:.3rem;color:var(--accent-dark)}
+.trip-actions{display:flex;gap:.8rem;margin-top:1.5rem}
+.trip-actions .btn{width:auto}
+
+.section{margin-bottom:1.8rem}
+.section h2{margin-bottom:.8rem}
+.budget-summary{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.budget-box{background:var(--bg-card);border:1.5px solid var(--bl);border-radius:var(--r);padding:1rem 1.4rem;flex:1;min-width:160px}
+.budget-box .label{font-size:.78rem;color:var(--ts);text-transform:uppercase;letter-spacing:.04em}
+.budget-box .amount{font-size:1.4rem;font-weight:700;color:var(--accent-dark);margin-top:.2rem}
+.cat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.8rem;margin-top:.8rem}
+.cat-box{background:#fff;border:1px solid var(--bl);border-radius:var(--rs);padding:.8rem;text-align:center}
+.cat-box .icon{font-size:1.4rem}
+.cat-box .cat-amount{font-weight:600;color:var(--accent-dark);margin-top:.2rem}
+.cat-box .cat-name{font-size:.78rem;color:var(--ts)}
+
+.item-list{display:flex;flex-direction:column;gap:.5rem;margin-top:.8rem}
+.item-row{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid var(--bl);border-radius:var(--rs);padding:.6rem .9rem}
+.item-row .desc{font-size:.85rem}
+.item-row .meta{font-size:.75rem;color:var(--ts)}
+.item-row .amt{font-weight:600;color:var(--accent-dark)}
+.item-row .del{cursor:pointer;color:var(--red);background:none;border:none;font-size:.9rem;margin-left:.6rem}
+
+.member-list{display:flex;flex-direction:column;gap:.5rem}
+.member-row{display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px solid var(--bl);border-radius:var(--rs);padding:.6rem .9rem}
+.toggle{position:relative;width:38px;height:20px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle .slider{position:absolute;inset:0;background:var(--bl);border-radius:20px;cursor:pointer;transition:.2s}
+.toggle .slider::before{content:'';position:absolute;width:16px;height:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+.toggle input:checked + .slider{background:var(--accent)}
+.toggle input:checked + .slider::before{transform:translateX(18px)}
+
+.country-chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.6rem}
+.chip{background:var(--bl);color:var(--accent-dark);border-radius:14px;padding:.25rem .7rem;font-size:.8rem;display:flex;align-items:center;gap:.4rem}
+.chip button{background:none;border:none;color:var(--accent-dark);cursor:pointer;font-weight:700}
+
+.hidden{display:none !important}
+.muted{color:var(--ts);font-size:.85rem}
+</style>
+</head>
+<body>
+
+<!-- ===== AUTH ===== -->
+<div id="pg-auth" class="page active center-page">
+  <div style="text-align:center">
+    <h1>Bon Voyage ✈️</h1>
+    <p class="sub">Planeá viajes con quien quieras</p>
+  </div>
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" id="tab-login" onclick="switchAuthTab('login')">Ingresar</div>
+      <div class="tab" id="tab-signup" onclick="switchAuthTab('signup')">Crear cuenta</div>
+    </div>
+    <div class="form-group" id="signup-name-group" style="display:none">
+      <label>Tu nombre</label>
+      <input type="text" id="auth-name" placeholder="Cómo te van a ver en los viajes">
+    </div>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="auth-email" placeholder="tu@email.com">
+    </div>
+    <div class="form-group">
+      <label>Contraseña</label>
+      <input type="password" id="auth-password" placeholder="••••••••">
+    </div>
+    <div class="error-msg" id="auth-error"></div>
+    <button class="btn btn-primary" id="auth-submit" onclick="submitAuth()">Ingresar</button>
+  </div>
+</div>
+
+<!-- ===== APP SHELL ===== -->
+<div id="pg-app" class="page">
+  <div class="topbar">
+    <h1>Bon Voyage ✈️</h1>
+    <div>
+      <span class="muted" id="welcome-name"></span>
+      &nbsp;·&nbsp;
+      <button class="btn-link" onclick="logout()">Salir</button>
+    </div>
+  </div>
+
+  <!-- TRIPS LIST -->
+  <div class="content" id="view-trips">
+    <div class="section">
+      <h2>Tus viajes</h2>
+      <div class="trip-grid" id="trips-grid"></div>
+      <div class="trip-actions">
+        <button class="btn btn-primary" onclick="openCreateTrip()">+ Crear viaje</button>
+        <button class="btn btn-secondary" onclick="openJoinTrip()">Unirme con código</button>
+      </div>
+    </div>
+
+    <div class="section card hidden" id="create-trip-card">
+      <h2>Nuevo viaje</h2>
+      <div class="form-group">
+        <label>Nombre del viaje</label>
+        <input type="text" id="trip-name" placeholder="Ej. Europa 2026">
+      </div>
+      <div class="form-group">
+        <label>Países (puedes elegir varios)</label>
+        <select id="trip-country-select"></select>
+        <div class="country-chips" id="trip-country-chips"></div>
+      </div>
+      <div class="error-msg" id="create-trip-error"></div>
+      <div class="row">
+        <button class="btn btn-secondary" onclick="closeCreateTrip()">Cancelar</button>
+        <button class="btn btn-primary" onclick="createTrip()">Crear</button>
+      </div>
+    </div>
+
+    <div class="section card hidden" id="join-trip-card">
+      <h2>Unirme a un viaje</h2>
+      <div class="form-group">
+        <label>Código de 5 dígitos</label>
+        <input type="text" id="join-code" maxlength="5" placeholder="00000">
+      </div>
+      <div class="error-msg" id="join-trip-error"></div>
+      <div class="row">
+        <button class="btn btn-secondary" onclick="closeJoinTrip()">Cancelar</button>
+        <button class="btn btn-primary" onclick="joinTrip()">Unirme</button>
+      </div>
+    </div>
+
+    <div class="section card">
+      <h2>Vincular con La Canasta</h2>
+      <p class="muted">Opcional. No es necesario tener cuenta en La Canasta para usar Bon Voyage.</p>
+      <div class="form-group">
+        <label>Email de tu cuenta en La Canasta</label>
+        <input type="email" id="canasta-email" placeholder="tu@email.com">
+      </div>
+      <button class="btn btn-secondary" onclick="linkCanasta()">Vincular</button>
+      <p class="muted" id="canasta-status" style="margin-top:.5rem"></p>
+    </div>
+  </div>
+
+  <!-- TRIP DETAIL -->
+  <div class="content hidden" id="view-trip">
+    <button class="btn-link" onclick="backToTrips()">← Volver a tus viajes</button>
+    <div class="section">
+      <h2 id="trip-detail-name"></h2>
+      <p class="muted" id="trip-detail-meta"></p>
+    </div>
+
+    <div class="section">
+      <h2>Presupuesto del viaje</h2>
+      <div class="budget-summary">
+        <div class="budget-box">
+          <div class="label">Presupuesto común</div>
+          <div class="amount" id="common-total">—</div>
+        </div>
+        <div class="budget-box">
+          <div class="label">Tu presupuesto personal</div>
+          <div class="amount" id="personal-total">—</div>
+        </div>
+      </div>
+      <div class="cat-grid" id="common-cat-grid"></div>
+    </div>
+
+    <div class="section">
+      <h2>Agregar gasto</h2>
+      <div class="card">
+        <div class="row">
+          <div class="form-group">
+            <label>Tipo</label>
+            <select id="item-scope">
+              <option value="common">Presupuesto común</option>
+              <option value="personal">Mi presupuesto personal</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Categoría</label>
+            <select id="item-category">
+              <option value="flights">✈️ Vuelos</option>
+              <option value="lodging">🏨 Hospedaje</option>
+              <option value="food">🍽️ Comidas</option>
+              <option value="visits">🎟️ Visitas</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="form-group">
+            <label>Monto</label>
+            <input type="number" id="item-amount" placeholder="0.00">
+          </div>
+          <div class="form-group">
+            <label>Moneda</label>
+            <select id="item-currency"></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Descripción (opcional)</label>
+          <input type="text" id="item-desc" placeholder="Ej. Vuelo Bogotá–Madrid">
+        </div>
+        <div class="error-msg" id="item-error"></div>
+        <button class="btn btn-primary" onclick="addBudgetItem()">Agregar</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Detalle de gastos</h2>
+      <div class="item-list" id="items-list"></div>
+    </div>
+
+    <div class="section">
+      <h2>Viajeros</h2>
+      <p class="muted">Puedes activar "compartir" para que tus acompañantes vean tu presupuesto personal.</p>
+      <div class="member-list" id="members-list"></div>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="countries.js"></script>
+<script src="currencies.js"></script>
+<script>
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+const CATEGORIES = [
+  { key: 'flights', icon: '✈️', name: 'Vuelos' },
+  { key: 'lodging', icon: '🏨', name: 'Hospedaje' },
+  { key: 'food', icon: '🍽️', name: 'Comidas' },
+  { key: 'visits', icon: '🎟️', name: 'Visitas' },
+];
+
+let authTab = 'login';
+let currentUser = null;
+let myTrips = [];
+let selectedCountries = [];
+let currentTrip = null;
+let currentTripMembers = [];
+let currentTripItems = [];
+
+// ===== AUTH =====
+function switchAuthTab(tab) {
+  authTab = tab;
+  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('tab-signup').classList.toggle('active', tab === 'signup');
+  document.getElementById('signup-name-group').style.display = tab === 'signup' ? 'block' : 'none';
+  document.getElementById('auth-submit').textContent = tab === 'signup' ? 'Crear cuenta' : 'Ingresar';
+  document.getElementById('auth-error').textContent = '';
+}
+
+async function submitAuth() {
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  const errorEl = document.getElementById('auth-error');
+  errorEl.textContent = '';
+  if (!email || !password) { errorEl.textContent = 'Falta completar el email y la contraseña.'; return; }
+
+  if (authTab === 'signup') {
+    const name = document.getElementById('auth-name').value.trim();
+    if (!name) { errorEl.textContent = 'Falta ingresar tu nombre.'; return; }
+    const { data, error } = await sb.auth.signUp({ email, password });
+    if (error) { errorEl.textContent = error.message; return; }
+    if (data.user) {
+      await sb.from('profiles').upsert({ user_id: data.user.id, display_name: name });
+    }
+    if (!data.session) {
+      errorEl.textContent = 'Cuenta creada. Puedes revisar tu email para confirmar y después ingresar.';
+      return;
+    }
+    await onLoggedIn();
+  } else {
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) { errorEl.textContent = error.message; return; }
+    await onLoggedIn();
+  }
+}
+
+async function logout() {
+  await sb.auth.signOut();
+  currentUser = null;
+  showPage('pg-auth');
+}
+
+async function onLoggedIn() {
+  const { data: { user } } = await sb.auth.getUser();
+  currentUser = user;
+  const { data: profile } = await sb.from('profiles').select('display_name').eq('user_id', user.id).single();
+  document.getElementById('welcome-name').textContent = profile ? profile.display_name : user.email;
+  showPage('pg-app');
+  await loadTrips();
+  await loadCanastaLinkStatus();
+}
+
+// ===== PAGES =====
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function showTripsView() {
+  document.getElementById('view-trips').classList.remove('hidden');
+  document.getElementById('view-trip').classList.add('hidden');
+}
+function showTripDetailView() {
+  document.getElementById('view-trips').classList.add('hidden');
+  document.getElementById('view-trip').classList.remove('hidden');
+}
+
+// ===== TRIPS LIST =====
+async function loadTrips() {
+  const { data: memberships } = await sb.from('trip_members').select('trip_id').eq('user_id', currentUser.id);
+  const tripIds = (memberships || []).map(m => m.trip_id);
+  if (tripIds.length === 0) { myTrips = []; renderTrips(); return; }
+  const { data: trips } = await sb.from('trips').select('*').in('id', tripIds);
+  myTrips = trips || [];
+  renderTrips();
+}
+
+function renderTrips() {
+  const grid = document.getElementById('trips-grid');
+  if (myTrips.length === 0) {
+    grid.innerHTML = '<p class="muted">Todavía no tenés viajes. Creá uno o unite con un código.</p>';
+    return;
+  }
+  grid.innerHTML = myTrips.map(t => `
+    <div class="trip-card" onclick="openTrip('${t.id}')">
+      <div class="code">Código ${t.code}</div>
+      <h3>${escapeHtml(t.name)}</h3>
+    </div>
+  `).join('');
+}
+
+// ===== CREATE TRIP =====
+function openCreateTrip() {
+  document.getElementById('create-trip-card').classList.remove('hidden');
+  document.getElementById('join-trip-card').classList.add('hidden');
+  selectedCountries = [];
+  const sel = document.getElementById('trip-country-select');
+  sel.innerHTML = '<option value="">Agregar país…</option>' + COUNTRIES.map(c => `<option value="${c.code}">${escapeHtml(c.name)}</option>`).join('');
+  sel.onchange = () => {
+    if (!sel.value) return;
+    const c = COUNTRIES.find(x => x.code === sel.value);
+    if (c && !selectedCountries.find(x => x.code === c.code)) {
+      selectedCountries.push(c);
+      renderCountryChips();
+    }
+    sel.value = '';
+  };
+  renderCountryChips();
+}
+function closeCreateTrip() {
+  document.getElementById('create-trip-card').classList.add('hidden');
+}
+function renderCountryChips() {
+  document.getElementById('trip-country-chips').innerHTML = selectedCountries.map(c => `
+    <span class="chip">${escapeHtml(c.name)} <button onclick="removeCountry('${c.code}')">×</button></span>
+  `).join('');
+}
+function removeCountry(code) {
+  selectedCountries = selectedCountries.filter(c => c.code !== code);
+  renderCountryChips();
+}
+
+function genTripCode() {
+  return String(Math.floor(10000 + Math.random() * 90000));
+}
+
+async function createTrip() {
+  const name = document.getElementById('trip-name').value.trim();
+  const errorEl = document.getElementById('create-trip-error');
+  errorEl.textContent = '';
+  if (!name) { errorEl.textContent = 'Falta ingresar un nombre para el viaje.'; return; }
+  if (selectedCountries.length === 0) { errorEl.textContent = 'Falta elegir al menos un país.'; return; }
+
+  let code, attempt = 0, lastError = null;
+  let trip = null;
+  while (attempt < 5 && !trip) {
+    code = genTripCode();
+    const { data, error } = await sb.from('trips').insert({ name, code, created_by: currentUser.id }).select().single();
+    if (!error) trip = data; else lastError = error;
+    attempt++;
+  }
+  if (!trip) {
+    errorEl.textContent = lastError ? lastError.message : 'No se pudo crear el viaje, puedes intentarlo de nuevo.';
+    console.error('createTrip error:', lastError);
+    return;
+  }
+
+  await sb.from('trip_members').insert({ trip_id: trip.id, user_id: currentUser.id, share_budget: false });
+  await sb.from('trip_countries').insert(selectedCountries.map(c => ({ trip_id: trip.id, country_code: c.code })));
+
+  closeCreateTrip();
+  await loadTrips();
+  openTrip(trip.id);
+}
+
+// ===== JOIN TRIP =====
+function openJoinTrip() {
+  document.getElementById('join-trip-card').classList.remove('hidden');
+  document.getElementById('create-trip-card').classList.add('hidden');
+}
+function closeJoinTrip() {
+  document.getElementById('join-trip-card').classList.add('hidden');
+}
+async function joinTrip() {
+  const code = document.getElementById('join-code').value.trim();
+  const errorEl = document.getElementById('join-trip-error');
+  errorEl.textContent = '';
+  if (code.length !== 5) { errorEl.textContent = 'El código tiene 5 dígitos.'; return; }
+  const { data: trip, error } = await sb.from('trips').select('*').eq('code', code).single();
+  if (error || !trip) { errorEl.textContent = 'No existe un viaje con ese código.'; return; }
+  const { error: joinError } = await sb.from('trip_members').insert({ trip_id: trip.id, user_id: currentUser.id, share_budget: false });
+  if (joinError && !joinError.message.includes('duplicate')) { errorEl.textContent = joinError.message; return; }
+  closeJoinTrip();
+  await loadTrips();
+  openTrip(trip.id);
+}
+
+// ===== TRIP DETAIL =====
+async function openTrip(tripId) {
+  const { data: trip } = await sb.from('trips').select('*').eq('id', tripId).single();
+  currentTrip = trip;
+  const { data: countries } = await sb.from('trip_countries').select('country_code').eq('trip_id', tripId);
+  const countryNames = (countries || []).map(c => {
+    const found = COUNTRIES.find(x => x.code === c.country_code);
+    return found ? found.name : c.country_code;
+  });
+
+  document.getElementById('trip-detail-name').textContent = `${trip.name}`;
+  document.getElementById('trip-detail-meta').textContent = `Código ${trip.code} · ${countryNames.join(', ')}`;
+
+  const currencySel = document.getElementById('item-currency');
+  currencySel.innerHTML = CURRENCIES.map(c => `<option value="${c.code}">${c.code} — ${escapeHtml(c.name)}</option>`).join('');
+
+  await loadMembers();
+  await loadBudgetItems();
+  showTripDetailView();
+}
+
+function backToTrips() {
+  currentTrip = null;
+  showTripsView();
+}
+
+async function loadMembers() {
+  const { data: members } = await sb.from('trip_members').select('user_id, share_budget').eq('trip_id', currentTrip.id);
+  currentTripMembers = members || [];
+  const ids = currentTripMembers.map(m => m.user_id);
+  const { data: profiles } = await sb.from('profiles').select('user_id, display_name').in('user_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+  const nameMap = {};
+  (profiles || []).forEach(p => nameMap[p.user_id] = p.display_name);
+
+  document.getElementById('members-list').innerHTML = currentTripMembers.map(m => `
+    <div class="member-row">
+      <span>${escapeHtml(nameMap[m.user_id] || 'Viajero')}${m.user_id === currentUser.id ? ' (vos)' : ''}</span>
+      ${m.user_id === currentUser.id ? `
+        <label class="toggle">
+          <input type="checkbox" ${m.share_budget ? 'checked' : ''} onchange="toggleShareBudget(this.checked)">
+          <span class="slider"></span>
+        </label>
+      ` : `<span class="muted">${m.share_budget ? 'Comparte su presupuesto' : 'Presupuesto privado'}</span>`}
+    </div>
+  `).join('');
+}
+
+async function toggleShareBudget(checked) {
+  await sb.from('trip_members').update({ share_budget: checked }).eq('trip_id', currentTrip.id).eq('user_id', currentUser.id);
+  await loadMembers();
+}
+
+async function loadBudgetItems() {
+  const { data: items } = await sb.from('budget_items').select('*').eq('trip_id', currentTrip.id).order('created_at', { ascending: false });
+  currentTripItems = items || [];
+  renderBudgetSummary();
+  renderItemsList();
+}
+
+function renderBudgetSummary() {
+  const commonItems = currentTripItems.filter(i => !i.member_id);
+  const personalItems = currentTripItems.filter(i => i.member_id === currentUser.id);
+
+  const commonTotal = commonItems.reduce((s, i) => s + Number(i.amount), 0);
+  const personalTotal = personalItems.reduce((s, i) => s + Number(i.amount), 0);
+  document.getElementById('common-total').textContent = formatMoney(commonTotal);
+  document.getElementById('personal-total').textContent = formatMoney(personalTotal);
+
+  document.getElementById('common-cat-grid').innerHTML = CATEGORIES.map(cat => {
+    const total = commonItems.filter(i => i.category === cat.key).reduce((s, i) => s + Number(i.amount), 0);
+    return `<div class="cat-box"><div class="icon">${cat.icon}</div><div class="cat-amount">${formatMoney(total)}</div><div class="cat-name">${cat.name}</div></div>`;
+  }).join('');
+}
+
+function renderItemsList() {
+  const visibleItems = currentTripItems.filter(i => {
+    if (!i.member_id) return true; // común
+    if (i.member_id === currentUser.id) return true; // mío
+    const member = currentTripMembers.find(m => m.user_id === i.member_id);
+    return member && member.share_budget; // compartido por el dueño
+  });
+
+  if (visibleItems.length === 0) {
+    document.getElementById('items-list').innerHTML = '<p class="muted">Todavía no hay gastos registrados.</p>';
+    return;
+  }
+  document.getElementById('items-list').innerHTML = visibleItems.map(i => {
+    const cat = CATEGORIES.find(c => c.key === i.category);
+    const scope = i.member_id ? (i.member_id === currentUser.id ? 'Personal' : 'Personal (compartido)') : 'Común';
+    return `
+      <div class="item-row">
+        <div>
+          <div class="desc">${cat.icon} ${escapeHtml(i.description || cat.name)}</div>
+          <div class="meta">${scope}</div>
+        </div>
+        <div>
+          <span class="amt">${Number(i.amount).toLocaleString()} ${i.currency}</span>
+          ${i.created_by === currentUser.id ? `<button class="del" onclick="deleteBudgetItem('${i.id}')">✕</button>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function addBudgetItem() {
+  const scope = document.getElementById('item-scope').value;
+  const category = document.getElementById('item-category').value;
+  const amount = parseFloat(document.getElementById('item-amount').value);
+  const currency = document.getElementById('item-currency').value;
+  const description = document.getElementById('item-desc').value.trim();
+  const errorEl = document.getElementById('item-error');
+  errorEl.textContent = '';
+  if (!amount || amount <= 0) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
+
+  const { error } = await sb.from('budget_items').insert({
+    trip_id: currentTrip.id,
+    member_id: scope === 'personal' ? currentUser.id : null,
+    category, amount, currency, description,
+    created_by: currentUser.id,
+  });
+  if (error) { errorEl.textContent = error.message; return; }
+  document.getElementById('item-amount').value = '';
+  document.getElementById('item-desc').value = '';
+  await loadBudgetItems();
+}
+
+async function deleteBudgetItem(id) {
+  await sb.from('budget_items').delete().eq('id', id);
+  await loadBudgetItems();
+}
+
+// ===== CANASTA LINK =====
+async function loadCanastaLinkStatus() {
+  const { data } = await sb.from('canasta_links').select('canasta_email').eq('user_id', currentUser.id).single();
+  const statusEl = document.getElementById('canasta-status');
+  if (data) {
+    statusEl.textContent = `Vinculado con ${data.canasta_email}`;
+    document.getElementById('canasta-email').value = data.canasta_email;
+  } else {
+    statusEl.textContent = '';
+  }
+}
+async function linkCanasta() {
+  const email = document.getElementById('canasta-email').value.trim();
+  if (!email) return;
+  await sb.from('canasta_links').upsert({ user_id: currentUser.id, canasta_email: email });
+  await loadCanastaLinkStatus();
+}
+
+// ===== HELPERS =====
+function formatMoney(n) {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ===== INIT =====
+(async function init() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    await onLoggedIn();
+  }
+})();
+</script>
+</body>
+</html>
