@@ -1001,7 +1001,7 @@ function updatePaymentSourceOptions() {
   psGroup.classList.toggle('hidden', !currentCanastaLink);
   if (!currentCanastaLink) return;
   const p = canastaProfileData;
-  const cards = (p?.debts || []).filter(d => d.isCredit);
+  const cards = (p?.debts || []).filter(d => !d.isCredit);
   const savings = p?.savings || [];
   const accounts = p?.bankAccounts || [];
   let html = '<optgroup label="💰 Disponible">'
