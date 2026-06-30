@@ -276,7 +276,7 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
             </div>
             <div class="form-group">
               <label>Categoría</label>
-              <select id="item-category">
+              <select id="item-category" onchange="toggleFlightFields('item', this.value)">
                 <option value="flights">✈️ Vuelos</option>
                 <option value="lodging">🏨 Hospedaje</option>
                 <option value="food">🍽️ Comidas</option>
@@ -284,6 +284,27 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
                 <option value="transport">🚗 Transporte</option>
                 <option value="insurance">🛡️ Seguros</option>
               </select>
+            </div>
+          </div>
+          <div id="item-flight-fields" class="hidden" style="margin-bottom:.6rem">
+            <div class="row" style="margin-bottom:.6rem">
+              <div class="form-group" style="margin-bottom:0"><label>Origen (ciudad o aeropuerto)</label>
+                <input type="text" id="item-flight-origin" placeholder="Ej. Bogotá (BOG)">
+              </div>
+              <div class="form-group" style="margin-bottom:0"><label>Destino</label>
+                <input type="text" id="item-flight-dest" placeholder="Ej. Madrid (MAD)">
+              </div>
+            </div>
+            <div class="row" style="margin-bottom:.6rem">
+              <div class="form-group" style="margin-bottom:0"><label>Fecha y hora de salida</label>
+                <input type="datetime-local" id="item-flight-dep">
+              </div>
+              <div class="form-group" style="margin-bottom:0"><label>Fecha y hora de llegada</label>
+                <input type="datetime-local" id="item-flight-arr">
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0"><label>Escala (opcional)</label>
+              <input type="text" id="item-flight-layover" placeholder="Ej. 2h en Ciudad de Panamá">
             </div>
           </div>
           <div class="row">
@@ -675,7 +696,7 @@ function renderItemsList() {
       <div class="item-row">
         <div>
           <div class="desc">${cat ? cat.icon : ''} ${escapeHtml(i.description || (cat ? cat.name : i.category))}</div>
-          <div class="meta">${scope}${ev ? ' · 📅 ' + escapeHtml(ev.title) : ''}</div>
+          <div class="meta">${scope}${ev ? ' · 📅 ' + escapeHtml(ev.title) : ''}${i.flight_origin ? ' · ✈️ ' + escapeHtml(i.flight_origin) + ' → ' + escapeHtml(i.flight_destination||'?') : ''}</div>
         </div>
         <div>
           <span class="amt">${Number(i.amount).toLocaleString()} ${i.currency}</span>
@@ -696,15 +717,17 @@ async function addBudgetItem() {
   errorEl.textContent = '';
   if (!amount || amount <= 0) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
 
+  const flightData = category === 'flights' ? getFlightFields('item') : {};
   const { error } = await sb.from('budget_items').insert({
     trip_id: currentTrip.id,
     member_id: scope === 'personal' ? currentUser.id : null,
-    category, amount, currency, description,
-    created_by: currentUser.id,
+    category, amount, currency, description, created_by: currentUser.id,
+    ...flightData,
   });
   if (error) { errorEl.textContent = error.message; return; }
   document.getElementById('item-amount').value = '';
   document.getElementById('item-desc').value = '';
+  clearFlightFields('item');
   await loadBudgetItems();
 }
 
@@ -812,10 +835,13 @@ function renderEventBody(ev) {
         : evItems.map(i => {
             const cat = CATEGORIES.find(c => c.key === i.category);
             const lbl = i.member_id ? (i.member_id === currentUser.id ? 'Personal' : 'Compartido') : 'Común';
+            const flightInfo = i.category === 'flights' && i.flight_origin
+              ? `<div style="font-size:.78rem;color:var(--accent2);font-weight:600;margin-top:.15rem">✈️ ${escapeHtml(i.flight_origin)} → ${escapeHtml(i.flight_destination||'?')}${i.flight_departure?' · '+i.flight_departure.replace('T',' ').slice(0,16):''}${i.flight_layover?' · Escala: '+escapeHtml(i.flight_layover):''}</div>` : '';
             return `<div class="event-expense-row">
               <div>
                 <span>${cat ? cat.icon : ''} ${escapeHtml(i.description || (cat ? cat.name : i.category))}</span>
                 <span style="font-size:.76rem;color:var(--ts);margin-left:.4rem">${lbl}</span>
+                ${flightInfo}
               </div>
               <span style="font-weight:700;color:var(--accent)">
                 ${Number(i.amount).toLocaleString()} ${i.currency}
@@ -833,9 +859,30 @@ function renderEventBody(ev) {
             </select>
           </div>
           <div class="form-group" style="margin-bottom:0"><label>Categoría</label>
-            <select id="ev-cat-${ev.id}">
+            <select id="ev-cat-${ev.id}" onchange="toggleFlightFields('ev-${ev.id}', this.value)">
               ${CATEGORIES.map(c => `<option value="${c.key}">${c.icon} ${c.name}</option>`).join('')}
             </select>
+          </div>
+        </div>
+        <div id="ev-${ev.id}-flight-fields" class="hidden" style="margin-top:.2rem;margin-bottom:.4rem">
+          <div class="row" style="margin-bottom:.5rem">
+            <div class="form-group" style="margin-bottom:0"><label>Origen</label>
+              <input type="text" id="ev-${ev.id}-flight-origin" placeholder="Ej. Bogotá (BOG)">
+            </div>
+            <div class="form-group" style="margin-bottom:0"><label>Destino</label>
+              <input type="text" id="ev-${ev.id}-flight-dest" placeholder="Ej. Madrid (MAD)">
+            </div>
+          </div>
+          <div class="row" style="margin-bottom:.5rem">
+            <div class="form-group" style="margin-bottom:0"><label>Fecha y hora de salida</label>
+              <input type="datetime-local" id="ev-${ev.id}-flight-dep">
+            </div>
+            <div class="form-group" style="margin-bottom:0"><label>Fecha y hora de llegada</label>
+              <input type="datetime-local" id="ev-${ev.id}-flight-arr">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0"><label>Escala (opcional)</label>
+            <input type="text" id="ev-${ev.id}-flight-layover" placeholder="Ej. 2h en Ciudad de Panamá">
           </div>
         </div>
         <div class="row" style="margin-bottom:.6rem">
@@ -870,6 +917,27 @@ function toggleEvAddForm(eventId) {
   if (f) f.classList.toggle('hidden');
 }
 
+function toggleFlightFields(prefix, category) {
+  const el = document.getElementById(prefix + '-flight-fields');
+  if (el) el.classList.toggle('hidden', category !== 'flights');
+}
+function getFlightFields(prefix) {
+  const g = id => document.getElementById(prefix + '-' + id);
+  return {
+    flight_origin:      g('flight-origin')?.value.trim() || null,
+    flight_destination: g('flight-dest')?.value.trim() || null,
+    flight_departure:   g('flight-dep')?.value || null,
+    flight_arrival:     g('flight-arr')?.value || null,
+    flight_layover:     g('flight-layover')?.value.trim() || null,
+  };
+}
+function clearFlightFields(prefix) {
+  ['flight-origin','flight-dest','flight-dep','flight-arr','flight-layover']
+    .forEach(id => { const el = document.getElementById(prefix + '-' + id); if (el) el.value = ''; });
+  const ff = document.getElementById(prefix + '-flight-fields');
+  if (ff) ff.classList.add('hidden');
+}
+
 async function toggleEventExpand(id) {
   expandedEventId = expandedEventId === id ? null : id;
   if (expandedEventId) await loadBudgetItems();
@@ -885,10 +953,12 @@ async function addEventExpense(eventId) {
   const errorEl = document.getElementById('ev-error-' + eventId);
   errorEl.textContent = '';
   if (!amount || amount <= 0) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
+  const flightData = category === 'flights' ? getFlightFields('ev-' + eventId) : {};
   const { error } = await sb.from('budget_items').insert({
     trip_id: currentTrip.id, event_id: eventId,
     member_id: scope === 'personal' ? currentUser.id : null,
     category, amount, currency, description, created_by: currentUser.id,
+    ...flightData,
   });
   if (error) { errorEl.textContent = error.message; return; }
   await loadBudgetItems();
