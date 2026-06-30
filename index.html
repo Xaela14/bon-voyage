@@ -333,6 +333,20 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
           <div class="form-group hidden" id="item-share-group">
             <label>Compartir este gasto con (opcional)</label>
             <div class="share-check-list" id="item-share-members"></div>
+            <div id="item-subsidy-row" class="hidden" style="margin-top:.7rem;padding:.65rem .8rem;background:var(--bg2);border-radius:var(--rs)">
+              <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.84rem;line-height:1.4">
+                <input type="checkbox" id="item-subsidy-check" style="flex-shrink:0">
+                <span>Yo pagué por ellos — el monto se divide en partes iguales y solo yo registro el gasto en La Canasta</span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group hidden" id="item-payment-source-group">
+            <label>Fuente de pago (La Canasta)</label>
+            <select id="item-payment-source">
+              <option value="disponible">💰 Disponible</option>
+              <option value="ahorros">🐷 Ahorros del viaje</option>
+              <option value="tarjeta">💳 Tarjeta de crédito</option>
+            </select>
           </div>
           <div class="error-msg" id="item-error"></div>
           <button class="btn btn-primary" onclick="addBudgetItem()">Agregar gasto</button>
@@ -348,6 +362,12 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
         <h2>Viajeros</h2>
         <p class="muted">Puedes activar "compartir" para que tus acompañantes vean tu presupuesto personal.</p>
         <div class="member-list" id="members-list"></div>
+      </div>
+
+      <div class="section">
+        <h2>🧺 La Canasta</h2>
+        <p class="muted" style="margin-bottom:.8rem">Vincula este viaje con tu presupuesto de La Canasta para sincronizar gastos automáticamente.</p>
+        <div class="card" id="canasta-link-panel" style="font-size:.9rem"></div>
       </div>
     </div>
 
@@ -432,6 +452,7 @@ let currentTripEvents = [];
 let expandedEventId = null;
 let memberNames = {};
 let pendingRequests = [];
+let currentCanastaLink = null;
 
 // ===== AUTH =====
 function switchAuthTab(tab) {
@@ -630,9 +651,11 @@ async function openTrip(tripId) {
 
   currentTripEvents = [];
   expandedEventId = null;
+  currentCanastaLink = null;
   await loadMembers();
   await loadBudgetItems();
   await loadEventsSilent();
+  await loadCanastaLink();
   showTripDetailView();
   switchTripTab('budget');
 }
@@ -641,6 +664,7 @@ function backToTrips() {
   currentTrip = null;
   currentTripEvents = [];
   expandedEventId = null;
+  currentCanastaLink = null;
   showTripsView();
   loadPendingRequests();
 }
@@ -660,7 +684,7 @@ async function loadMembers() {
   const shareGroup = document.getElementById('item-share-group');
   if (shareEl && others.length > 0) {
     shareEl.innerHTML = others.map(m => `
-      <label><input type="checkbox" data-uid="${m.user_id}"> ${escapeHtml(nameMap[m.user_id] || 'Viajero')}</label>
+      <label><input type="checkbox" data-uid="${m.user_id}" onchange="updateSubsidyRow()"> ${escapeHtml(nameMap[m.user_id] || 'Viajero')}</label>
     `).join('');
     shareGroup.classList.remove('hidden');
   }
@@ -695,9 +719,11 @@ function renderBudgetSummary() {
   const personalItems = currentTripItems.filter(i => i.member_id === currentUser.id);
 
   const commonTotal = commonItems.reduce((s, i) => s + Number(i.amount), 0);
-  const personalTotal = personalItems.reduce((s, i) => s + Number(i.amount), 0);
+  const personalConsumed = personalItems.reduce((s, i) => s + Number(i.amount_consumed ?? i.amount), 0);
+  const personalPaid = personalItems.reduce((s, i) => s + Number(i.amount), 0);
   document.getElementById('common-total').textContent = formatMoney(commonTotal);
-  document.getElementById('personal-total').textContent = formatMoney(personalTotal);
+  document.getElementById('personal-total').textContent = formatMoney(personalConsumed)
+    + (personalPaid > personalConsumed ? ` (pagaste ${formatMoney(personalPaid)})` : '');
 
   document.getElementById('common-cat-grid').innerHTML = CATEGORIES.map(cat => {
     const total = commonItems.filter(i => i.category === cat.key).reduce((s, i) => s + Number(i.amount), 0);
@@ -719,16 +745,22 @@ function renderItemsList() {
   }
   document.getElementById('items-list').innerHTML = visibleItems.map(i => {
     const cat = CATEGORIES.find(c => c.key === i.category);
-    const scope = i.member_id ? (i.member_id === currentUser.id ? 'Personal' : 'Personal (compartido)') : 'Común';
+    let scope;
+    if (!i.member_id) scope = 'Común';
+    else if (i.subsidy_from) scope = `Subsidio de ${escapeHtml(memberNames[i.subsidy_from] || 'compañero')}`;
+    else if (i.member_id === currentUser.id) scope = 'Personal';
+    else scope = `Personal · ${escapeHtml(memberNames[i.member_id] || 'Viajero')}`;
     const ev = i.event_id ? currentTripEvents.find(e => e.id === i.event_id) : null;
+    const displayAmt = i.amount_consumed != null ? Number(i.amount_consumed) : Number(i.amount);
+    const paidExtra = i.amount_consumed != null && Number(i.amount) > Number(i.amount_consumed);
     return `
       <div class="item-row">
         <div>
-          <div class="desc">${cat ? cat.icon : ''} ${escapeHtml(i.description || (cat ? cat.name : i.category))}</div>
-          <div class="meta">${scope}${ev ? ' · 📅 ' + escapeHtml(ev.title) : ''}${i.flight_origin ? ' · ✈️ ' + escapeHtml(i.flight_origin) + ' → ' + escapeHtml(i.flight_destination||'?') : ''}</div>
+          <div class="desc">${cat ? cat.icon : ''} ${escapeHtml(i.description || (cat ? cat.name : i.category))}${i.subsidy_from === currentUser.id ? ' <span style="font-size:.72rem;color:var(--accent4)">subsidio</span>' : ''}</div>
+          <div class="meta">${scope}${ev ? ' · 📅 ' + escapeHtml(ev.title) : ''}${i.flight_origin ? ' · ✈️ ' + escapeHtml(i.flight_origin) + ' → ' + escapeHtml(i.flight_destination||'?') : ''}${i.payment_source ? ' · 🧺 ' + i.payment_source : ''}</div>
         </div>
         <div>
-          <span class="amt">${Number(i.amount).toLocaleString()} ${i.currency}</span>
+          <span class="amt">${displayAmt.toLocaleString()} ${i.currency}${paidExtra ? `<br><span style="font-size:.72rem;color:var(--tm)">pagaste ${Number(i.amount).toLocaleString()}</span>` : ''}</span>
           ${i.created_by === currentUser.id ? `<button class="del" onclick="deleteBudgetItem('${i.id}')">✕</button>` : ''}
         </div>
       </div>
@@ -748,23 +780,46 @@ async function addBudgetItem() {
 
   const flightData = category === 'flights' ? getFlightFields('item') : {};
   const sharedWith = getSharedUids('item-share-members');
+  const isSubsidy = document.getElementById('item-subsidy-check')?.checked && sharedWith.length > 0;
+  const paymentSource = currentCanastaLink ? (document.getElementById('item-payment-source')?.value || null) : null;
+  const nPeople = isSubsidy ? 1 + sharedWith.length : 1;
+  const consumedEach = isSubsidy ? amount / nPeople : null;
+
   const { data: savedItem, error } = await sb.from('budget_items').insert({
     trip_id: currentTrip.id,
     member_id: scope === 'personal' ? currentUser.id : null,
     category, amount, currency, description, created_by: currentUser.id,
+    payment_source: paymentSource,
+    amount_consumed: isSubsidy ? consumedEach : null,
     ...flightData,
   }).select().single();
   if (error) { errorEl.textContent = error.message; return; }
-  if (savedItem && sharedWith.length > 0) {
+
+  if (isSubsidy && sharedWith.length > 0) {
+    await Promise.all(sharedWith.map(uid => sb.from('budget_items').insert({
+      trip_id: currentTrip.id, member_id: uid,
+      category, amount: consumedEach, amount_consumed: consumedEach,
+      currency, description, created_by: currentUser.id,
+      subsidy_from: currentUser.id,
+    })));
+  } else if (savedItem && sharedWith.length > 0) {
     await Promise.all(sharedWith.map(uid => sb.from('expense_share_requests').insert({
       trip_id: currentTrip.id, budget_item_id: savedItem.id,
       from_user_id: currentUser.id, to_user_id: uid,
     })));
   }
+
+  if (savedItem && currentCanastaLink && paymentSource) {
+    await syncExpenseToCanasta(savedItem, paymentSource, amount);
+  }
+
   document.getElementById('item-amount').value = '';
   document.getElementById('item-desc').value = '';
   clearFlightFields('item');
   document.querySelectorAll('#item-share-members input').forEach(cb => cb.checked = false);
+  const subsidyCheck = document.getElementById('item-subsidy-check');
+  if (subsidyCheck) subsidyCheck.checked = false;
+  document.getElementById('item-subsidy-row')?.classList.add('hidden');
   await loadBudgetItems();
 }
 
@@ -773,22 +828,101 @@ async function deleteBudgetItem(id) {
   await loadBudgetItems();
 }
 
-// ===== CANASTA LINK =====
-async function loadCanastaLinkStatus() {
-  const { data } = await sb.from('canasta_links').select('canasta_email').eq('user_id', currentUser.id).single();
-  const statusEl = document.getElementById('canasta-status');
-  if (data) {
-    statusEl.textContent = `Vinculado con ${data.canasta_email}`;
-    document.getElementById('canasta-email').value = data.canasta_email;
-  } else {
-    statusEl.textContent = '';
-  }
+// ===== CANASTA INTEGRATION =====
+async function loadCanastaLink() {
+  if (!currentUser || !currentTrip) return;
+  const { data } = await sb.from('canasta_trip_links')
+    .select('canasta_trip_code')
+    .eq('user_id', currentUser.id)
+    .eq('trip_id', currentTrip.id)
+    .single();
+  currentCanastaLink = data || null;
+  renderCanastaLinkPanel();
 }
-async function linkCanasta() {
-  const email = document.getElementById('canasta-email').value.trim();
-  if (!email) return;
-  await sb.from('canasta_links').upsert({ user_id: currentUser.id, canasta_email: email });
-  await loadCanastaLinkStatus();
+
+function renderCanastaLinkPanel() {
+  const el = document.getElementById('canasta-link-panel');
+  if (!el) return;
+  if (currentCanastaLink) {
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:.8rem;flex-wrap:wrap">
+        <div>
+          <div style="font-size:.88rem;font-weight:600;color:var(--accent4)">✅ Vinculado</div>
+          <div style="font-size:.82rem;color:var(--ts);margin-top:.2rem">Código de viaje en La Canasta: <strong>${escapeHtml(currentCanastaLink.canasta_trip_code)}</strong></div>
+          <div style="font-size:.76rem;color:var(--tm);margin-top:.2rem">Los gastos personales se sincronizan automáticamente.</div>
+        </div>
+        <button onclick="unlinkCanastaTrip()" style="background:none;border:1px solid var(--border);border-radius:var(--rs);padding:.35rem .8rem;cursor:pointer;font-size:.8rem;color:var(--ts);white-space:nowrap">Desvincular</button>
+      </div>`;
+  } else {
+    el.innerHTML = `
+      <div style="font-size:.82rem;color:var(--ts);margin-bottom:.75rem">Ingresa el código de tu viaje en La Canasta (ej. <strong>V001</strong>) para sincronizar gastos.</div>
+      <div style="display:flex;gap:.6rem">
+        <input type="text" id="canasta-code-input" placeholder="Ej. V001" style="flex:1;padding:.5rem .8rem;border:1px solid var(--border);border-radius:var(--rs);font-family:inherit;font-size:.88rem;outline:none;background:var(--bg)">
+        <button onclick="linkCanastaTrip()" style="background:var(--accent);color:#fff;border:none;border-radius:var(--rs);padding:.5rem 1.1rem;cursor:pointer;font-family:inherit;font-size:.88rem;font-weight:600">Vincular</button>
+      </div>`;
+  }
+  const psGroup = document.getElementById('item-payment-source-group');
+  if (psGroup) psGroup.classList.toggle('hidden', !currentCanastaLink);
+}
+
+async function linkCanastaTrip() {
+  const code = document.getElementById('canasta-code-input')?.value.trim().toUpperCase();
+  if (!code) return;
+  const { error } = await sb.from('canasta_trip_links').upsert(
+    { user_id: currentUser.id, trip_id: currentTrip.id, canasta_trip_code: code },
+    { onConflict: 'user_id,trip_id' }
+  );
+  if (!error) { currentCanastaLink = { canasta_trip_code: code }; renderCanastaLinkPanel(); }
+}
+
+async function unlinkCanastaTrip() {
+  await sb.from('canasta_trip_links').delete()
+    .eq('user_id', currentUser.id).eq('trip_id', currentTrip.id);
+  currentCanastaLink = null;
+  renderCanastaLinkPanel();
+}
+
+async function syncExpenseToCanasta(item, paymentSource, fullAmount) {
+  if (!currentCanastaLink || !paymentSource) return;
+  try {
+    const { data: profileRow } = await sb.from('canasta_profiles')
+      .select('data').eq('user_id', currentUser.id).single();
+    if (!profileRow) return;
+    const profile = profileRow.data || {};
+    if (!profile.transactions) profile.transactions = [];
+    const cat = CATEGORIES.find(c => c.key === item.category);
+    const isAhorro = paymentSource === 'ahorros';
+    const tx = {
+      id: 'bv_' + Date.now(),
+      type: isAhorro ? 'ahorro' : 'expense',
+      amount: isAhorro ? -Math.abs(fullAmount) : fullAmount,
+      currency: item.currency,
+      category: `✈️ Viajes · ${cat ? cat.name : item.category}`,
+      date: new Date().toISOString().split('T')[0],
+      description: item.description || (cat ? cat.name : item.category),
+      paymentSource,
+      bonVoyageTripCode: currentCanastaLink.canasta_trip_code,
+    };
+    if (isAhorro) {
+      const saving = (profile.savings || []).find(s => s.code === currentCanastaLink.canasta_trip_code);
+      if (saving) tx.savingId = saving.id;
+    }
+    profile.transactions.push(tx);
+    await sb.from('canasta_profiles').upsert(
+      { user_id: currentUser.id, data: profile, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' }
+    );
+  } catch(e) { console.warn('Canasta sync error:', e); }
+}
+
+function updateSubsidyRow() {
+  const anyChecked = [...document.querySelectorAll('#item-share-members input')].some(cb => cb.checked);
+  const subsidyRow = document.getElementById('item-subsidy-row');
+  if (subsidyRow) subsidyRow.classList.toggle('hidden', !anyChecked);
+  if (!anyChecked) {
+    const sc = document.getElementById('item-subsidy-check');
+    if (sc) sc.checked = false;
+  }
 }
 
 // ===== ITINERARY =====
