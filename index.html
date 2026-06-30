@@ -786,7 +786,7 @@ async function openTrip(tripId) {
   document.getElementById('trip-detail-meta').textContent = `Código ${trip.code} · ${countryNames.join(', ')}`;
 
   const currencySel = document.getElementById('item-currency');
-  currencySel.innerHTML = CURRENCIES.map(c => `<option value="${c.code}">${c.code} — ${escapeHtml(c.name)}</option>`).join('');
+  currencySel.innerHTML = currencySelectOptions('COP');
 
   currentTripEvents = [];
   expandedEventId = null;
@@ -1136,6 +1136,17 @@ function updatePaymentSourceOptions() {
   sel.innerHTML = html;
 }
 
+function currencySelectOptions(selected = 'COP') {
+  const common = ['COP','USD','EUR','ARS','BRL','MXN','GBP','CAD','AUD','CHF'];
+  const commonHtml = '<optgroup label="— Frecuentes —">'
+    + common.map(code => { const c = CURRENCIES.find(x=>x.code===code); return c ? `<option value="${c.code}" ${c.code===selected?'selected':''}>${c.code} — ${escapeHtml(c.name)}</option>` : ''; }).join('')
+    + '</optgroup>';
+  const restHtml = '<optgroup label="— Todas —">'
+    + CURRENCIES.filter(c=>!common.includes(c.code)).map(c=>`<option value="${c.code}" ${c.code===selected?'selected':''}>${c.code} — ${escapeHtml(c.name)}</option>`).join('')
+    + '</optgroup>';
+  return commonHtml + restHtml;
+}
+
 function handlePaymentSourceChange() {
   const val = document.getElementById('item-payment-source')?.value;
   document.getElementById('item-cover-payer')?.classList.toggle('hidden', val !== 'cover');
@@ -1330,9 +1341,7 @@ function renderEventBody(ev) {
             <input type="number" id="ev-amount-${ev.id}" placeholder="0.00">
           </div>
           <div class="form-group" style="margin-bottom:0"><label>Moneda</label>
-            <select id="ev-currency-${ev.id}">
-              ${CURRENCIES.map(c => `<option value="${c.code}">${c.code} — ${escapeHtml(c.name)}</option>`).join('')}
-            </select>
+            <select id="ev-currency-${ev.id}">${currencySelectOptions('COP')}</select>
           </div>
         </div>
         <div class="form-group" style="margin-bottom:.6rem"><label>Descripción (opcional)</label>
