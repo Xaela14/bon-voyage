@@ -378,7 +378,7 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
 
       <div class="section">
         <h2>Viajeros</h2>
-        <p class="muted">Puedes activar "compartir" para que tus acompañantes vean tu presupuesto personal.</p>
+        <p class="muted">El switch al lado de tu nombre controla si los demás viajeros pueden ver tus gastos personales.</p>
         <div class="member-list" id="members-list"></div>
       </div>
 
@@ -519,8 +519,15 @@ async function logout() {
 async function onLoggedIn() {
   const { data: { user } } = await sb.auth.getUser();
   currentUser = user;
-  const { data: profile } = await sb.from('profiles').select('display_name').eq('user_id', user.id).single();
-  document.getElementById('welcome-name').textContent = profile ? profile.display_name : user.email;
+  let { data: profile } = await sb.from('profiles').select('display_name').eq('user_id', user.id).single();
+  if (!profile) {
+    // Usuario de La Canasta sin perfil en Bon Voyage — crearlo con nombre de canasta_profiles
+    const { data: canasta } = await sb.from('canasta_profiles').select('data').eq('user_id', user.id).single();
+    const displayName = canasta?.data?.name || user.email;
+    await sb.from('profiles').upsert({ user_id: user.id, display_name: displayName });
+    profile = { display_name: displayName };
+  }
+  document.getElementById('welcome-name').textContent = profile.display_name;
   showPage('pg-app');
   await loadTrips();
   await loadCanastaLinkStatus();
