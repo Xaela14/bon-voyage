@@ -521,17 +521,54 @@ async function onLoggedIn() {
   currentUser = user;
   let { data: profile } = await sb.from('profiles').select('display_name').eq('user_id', user.id).single();
   if (!profile) {
-    // Usuario de La Canasta sin perfil en Bon Voyage — crearlo con nombre de canasta_profiles
     const { data: canasta } = await sb.from('canasta_profiles').select('data').eq('user_id', user.id).single();
-    const displayName = canasta?.data?.name || user.email;
-    await sb.from('profiles').upsert({ user_id: user.id, display_name: displayName });
-    profile = { display_name: displayName };
+    const canastaName = canasta?.data?.name;
+    if (canastaName) {
+      await sb.from('profiles').upsert({ user_id: user.id, display_name: canastaName });
+      profile = { display_name: canastaName };
+    } else {
+      const name = await askDisplayName();
+      await sb.from('profiles').upsert({ user_id: user.id, display_name: name });
+      profile = { display_name: name };
+    }
   }
   document.getElementById('welcome-name').textContent = profile.display_name;
   showPage('pg-app');
   await loadTrips();
   await loadCanastaLinkStatus();
   await loadPendingRequests();
+}
+
+function askDisplayName() {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:16px;padding:2rem;max-width:340px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+        <div style="font-size:1.5rem;margin-bottom:.3rem">✈️</div>
+        <h2 style="margin:0 0 .4rem;font-size:1.1rem;color:#1a1a2e">¡Bienvenido a Bon Voyage!</h2>
+        <p style="margin:0 0 1.2rem;font-size:.88rem;color:#666">¿Cómo quieres que te vean los demás viajeros?</p>
+        <input id="setup-name" type="text" placeholder="Tu nombre" maxlength="40"
+          style="width:100%;padding:.75rem;border:1.5px solid #ddd;border-radius:10px;font-size:1rem;box-sizing:border-box;outline:none">
+        <button id="setup-btn" style="margin-top:1rem;width:100%;padding:.8rem;background:#e85d04;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer">
+          Continuar
+        </button>
+        <div id="setup-err" style="color:#e85d04;font-size:.8rem;margin-top:.5rem;min-height:1rem"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('#setup-name');
+    const btn   = overlay.querySelector('#setup-btn');
+    const err   = overlay.querySelector('#setup-err');
+    input.focus();
+    const confirm = () => {
+      const val = input.value.trim();
+      if (!val) { err.textContent = 'Escribe tu nombre para continuar.'; return; }
+      document.body.removeChild(overlay);
+      resolve(val);
+    };
+    btn.addEventListener('click', confirm);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); });
+  });
 }
 
 // ===== PAGES =====
