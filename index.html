@@ -312,8 +312,19 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
                 <input type="datetime-local" id="item-flight-arr">
               </div>
             </div>
-            <div class="form-group" style="margin-bottom:0"><label>Escala (opcional)</label>
-              <input type="text" id="item-flight-layover" placeholder="Ej. 2h en Ciudad de Panamá">
+            <div class="row" style="margin-bottom:.6rem">
+              <div class="form-group" style="margin-bottom:0"><label>Escala (opcional)</label>
+                <input type="text" id="item-flight-layover" placeholder="Ej. 2h en Ciudad de Panamá">
+              </div>
+              <div class="form-group" style="margin-bottom:0"><label>Número de vuelo (opcional)</label>
+                <input type="text" id="item-flight-number" placeholder="Ej. AV 123">
+              </div>
+            </div>
+            <div style="margin-top:.4rem">
+              <label style="display:flex;align-items:center;gap:.5rem;font-size:.84rem;cursor:pointer">
+                <input type="checkbox" id="item-flight-share">
+                <span>Compartir información del vuelo con todos los viajeros del grupo</span>
+              </label>
             </div>
           </div>
           <div class="row">
@@ -326,9 +337,15 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
               <select id="item-currency"></select>
             </div>
           </div>
-          <div class="form-group">
-            <label>Descripción (opcional)</label>
-            <input type="text" id="item-desc" placeholder="Ej. Vuelo Bogotá–Madrid">
+          <div class="row">
+            <div class="form-group">
+              <label>Fecha del gasto</label>
+              <input type="date" id="item-date">
+            </div>
+            <div class="form-group">
+              <label>Descripción (opcional)</label>
+              <input type="text" id="item-desc" placeholder="Ej. Vuelo Bogotá–Madrid">
+            </div>
           </div>
           <div class="form-group hidden" id="item-share-group">
             <label>Compartir este gasto con (opcional)</label>
@@ -342,11 +359,12 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
           </div>
           <div class="form-group hidden" id="item-payment-source-group">
             <label>Fuente de pago (La Canasta)</label>
-            <select id="item-payment-source">
-              <option value="disponible">💰 Disponible</option>
-              <option value="ahorros">🐷 Ahorros del viaje</option>
-              <option value="tarjeta">💳 Tarjeta de crédito</option>
-            </select>
+            <select id="item-payment-source" onchange="handlePaymentSourceChange()"></select>
+            <div id="item-cover-payer" class="hidden" style="margin-top:.6rem;padding:.65rem .8rem;background:var(--bg2);border-radius:var(--rs)">
+              <div style="font-size:.82rem;color:var(--ts);margin-bottom:.5rem;font-weight:500">¿Quién pagó por ti?</div>
+              <div id="item-cover-members"></div>
+              <div style="font-size:.75rem;color:var(--tm);margin-top:.5rem">Le llegará una notificación para que registre el monto exacto.</div>
+            </div>
           </div>
           <div class="error-msg" id="item-error"></div>
           <button class="btn btn-primary" onclick="addBudgetItem()">Agregar gasto</button>
@@ -453,6 +471,7 @@ let expandedEventId = null;
 let memberNames = {};
 let pendingRequests = [];
 let currentCanastaLink = null;
+let canastaProfileData = null;
 
 // ===== AUTH =====
 function switchAuthTab(tab) {
@@ -541,8 +560,13 @@ function renderTrips() {
   }
   grid.innerHTML = myTrips.map(t => `
     <div class="trip-card" onclick="openTrip('${t.id}')">
-      <div class="code">Código ${t.code}</div>
-      <h3>${escapeHtml(t.name)}</h3>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem">
+        <div>
+          <div class="code">Código ${t.code}</div>
+          <h3>${escapeHtml(t.name)}</h3>
+        </div>
+        <button onclick="event.stopPropagation();deleteTrip('${t.id}','${escapeHtml(t.name)}')" style="background:none;border:none;color:var(--tm);cursor:pointer;font-size:.9rem;padding:.1rem .3rem;line-height:1;flex-shrink:0" title="Eliminar viaje">✕</button>
+      </div>
     </div>
   `).join('');
 }
@@ -652,12 +676,15 @@ async function openTrip(tripId) {
   currentTripEvents = [];
   expandedEventId = null;
   currentCanastaLink = null;
+  canastaProfileData = null;
   await loadMembers();
   await loadBudgetItems();
   await loadEventsSilent();
   await loadCanastaLink();
   showTripDetailView();
   switchTripTab('budget');
+  const dateEl = document.getElementById('item-date');
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().split('T')[0];
 }
 
 function backToTrips() {
@@ -687,6 +714,12 @@ async function loadMembers() {
       <label><input type="checkbox" data-uid="${m.user_id}" onchange="updateSubsidyRow()"> ${escapeHtml(nameMap[m.user_id] || 'Viajero')}</label>
     `).join('');
     shareGroup.classList.remove('hidden');
+    const coverEl = document.getElementById('item-cover-members');
+    if (coverEl) coverEl.innerHTML = others.map(m => `
+      <label style="display:flex;align-items:center;gap:.5rem;font-size:.85rem;margin-bottom:.3rem;cursor:pointer">
+        <input type="radio" name="cover-payer" value="${m.user_id}"> ${escapeHtml(nameMap[m.user_id] || 'Viajero')}
+      </label>
+    `).join('');
   }
 
   document.getElementById('members-list').innerHTML = currentTripMembers.map(m => `
@@ -733,10 +766,12 @@ function renderBudgetSummary() {
 
 function renderItemsList() {
   const visibleItems = currentTripItems.filter(i => {
-    if (!i.member_id) return true; // común
-    if (i.member_id === currentUser.id) return true; // mío
+    if (!i.member_id) return true;
+    if (i.member_id === currentUser.id) return true;
+    if (i.share_flight_info && i.category === 'flights') return true; // vuelo compartido con el grupo
+    if (i.subsidy_from === currentUser.id) return true; // subsidio que yo pagué
     const member = currentTripMembers.find(m => m.user_id === i.member_id);
-    return member && member.share_budget; // compartido por el dueño
+    return member && member.share_budget;
   });
 
   if (visibleItems.length === 0) {
@@ -753,14 +788,19 @@ function renderItemsList() {
     const ev = i.event_id ? currentTripEvents.find(e => e.id === i.event_id) : null;
     const displayAmt = i.amount_consumed != null ? Number(i.amount_consumed) : Number(i.amount);
     const paidExtra = i.amount_consumed != null && Number(i.amount) > Number(i.amount_consumed);
+    const isCoverPending = i.amount === 0 && i.member_id === currentUser.id;
+    const dateStr = i.expense_date ? new Date(i.expense_date + 'T12:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'short'}) + ' · ' : '';
+    const flightStr = i.flight_origin ? ` ✈️ ${escapeHtml(i.flight_origin)}→${escapeHtml(i.flight_destination||'?')}${i.flight_number?' ('+escapeHtml(i.flight_number)+')':''}` : '';
+    const psLabel = i.payment_source ? ` · 🧺 ${i.payment_source.split(':')[0]}` : '';
+    const sharedFlight = i.share_flight_info && i.member_id !== currentUser.id ? ' · 🔗 vuelo compartido' : '';
     return `
       <div class="item-row">
         <div>
-          <div class="desc">${cat ? cat.icon : ''} ${escapeHtml(i.description || (cat ? cat.name : i.category))}${i.subsidy_from === currentUser.id ? ' <span style="font-size:.72rem;color:var(--accent4)">subsidio</span>' : ''}</div>
-          <div class="meta">${scope}${ev ? ' · 📅 ' + escapeHtml(ev.title) : ''}${i.flight_origin ? ' · ✈️ ' + escapeHtml(i.flight_origin) + ' → ' + escapeHtml(i.flight_destination||'?') : ''}${i.payment_source ? ' · 🧺 ' + i.payment_source : ''}</div>
+          <div class="desc">${cat ? cat.icon : ''} ${escapeHtml(i.description || (cat ? cat.name : i.category))}${i.subsidy_from === currentUser.id ? ' <span style="font-size:.72rem;color:var(--accent4)">subsidio</span>' : ''}${isCoverPending ? ' <span style="font-size:.72rem;color:var(--accent3)">⏳ pendiente de pago</span>' : ''}</div>
+          <div class="meta">${dateStr}${scope}${ev ? ' · 📅 ' + escapeHtml(ev.title) : ''}${flightStr}${psLabel}${sharedFlight}</div>
         </div>
         <div>
-          <span class="amt">${displayAmt.toLocaleString()} ${i.currency}${paidExtra ? `<br><span style="font-size:.72rem;color:var(--tm)">pagaste ${Number(i.amount).toLocaleString()}</span>` : ''}</span>
+          <span class="amt">${isCoverPending ? '<span style="color:var(--tm);font-size:.82rem">pendiente</span>' : displayAmt.toLocaleString() + ' ' + i.currency}${paidExtra ? `<br><span style="font-size:.72rem;color:var(--tm)">pagaste ${Number(i.amount).toLocaleString()}</span>` : ''}</span>
           ${i.created_by === currentUser.id ? `<button class="del" onclick="deleteBudgetItem('${i.id}')">✕</button>` : ''}
         </div>
       </div>
@@ -771,17 +811,26 @@ function renderItemsList() {
 async function addBudgetItem() {
   const scope = document.getElementById('item-scope').value;
   const category = document.getElementById('item-category').value;
-  const amount = parseFloat(document.getElementById('item-amount').value);
   const currency = document.getElementById('item-currency').value;
   const description = document.getElementById('item-desc').value.trim();
+  const expenseDate = document.getElementById('item-date')?.value || new Date().toISOString().split('T')[0];
   const errorEl = document.getElementById('item-error');
   errorEl.textContent = '';
-  if (!amount || amount <= 0) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
+
+  const paymentVal = currentCanastaLink ? (document.getElementById('item-payment-source')?.value || null) : null;
+  const isCover = paymentVal === 'cover';
+  const coverPayerUid = isCover
+    ? document.querySelector('#item-cover-members input[name="cover-payer"]:checked')?.value : null;
+
+  if (isCover && !coverPayerUid) { errorEl.textContent = 'Selecciona quién pagó por ti.'; return; }
+
+  const rawAmount = parseFloat(document.getElementById('item-amount').value);
+  const amount = isCover ? 0 : rawAmount;
+  if (!isCover && (!rawAmount || rawAmount <= 0)) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
 
   const flightData = category === 'flights' ? getFlightFields('item') : {};
   const sharedWith = getSharedUids('item-share-members');
   const isSubsidy = document.getElementById('item-subsidy-check')?.checked && sharedWith.length > 0;
-  const paymentSource = currentCanastaLink ? (document.getElementById('item-payment-source')?.value || null) : null;
   const nPeople = isSubsidy ? 1 + sharedWith.length : 1;
   const consumedEach = isSubsidy ? amount / nPeople : null;
 
@@ -789,18 +838,25 @@ async function addBudgetItem() {
     trip_id: currentTrip.id,
     member_id: scope === 'personal' ? currentUser.id : null,
     category, amount, currency, description, created_by: currentUser.id,
-    payment_source: paymentSource,
+    expense_date: expenseDate,
+    payment_source: isCover ? null : paymentVal,
     amount_consumed: isSubsidy ? consumedEach : null,
     ...flightData,
   }).select().single();
   if (error) { errorEl.textContent = error.message; return; }
 
-  if (isSubsidy && sharedWith.length > 0) {
+  if (isCover && savedItem) {
+    await sb.from('payment_cover_requests').insert({
+      trip_id: currentTrip.id, item_id: savedItem.id,
+      from_user_id: currentUser.id, to_user_id: coverPayerUid,
+      currency,
+    });
+  } else if (isSubsidy && sharedWith.length > 0) {
     await Promise.all(sharedWith.map(uid => sb.from('budget_items').insert({
       trip_id: currentTrip.id, member_id: uid,
       category, amount: consumedEach, amount_consumed: consumedEach,
       currency, description, created_by: currentUser.id,
-      subsidy_from: currentUser.id,
+      expense_date: expenseDate, subsidy_from: currentUser.id,
     })));
   } else if (savedItem && sharedWith.length > 0) {
     await Promise.all(sharedWith.map(uid => sb.from('expense_share_requests').insert({
@@ -809,23 +865,63 @@ async function addBudgetItem() {
     })));
   }
 
-  if (savedItem && currentCanastaLink && paymentSource) {
-    await syncExpenseToCanasta(savedItem, paymentSource, amount);
+  if (savedItem && currentCanastaLink && paymentVal && !isCover) {
+    await syncExpenseToCanasta(savedItem, paymentVal, amount);
   }
 
   document.getElementById('item-amount').value = '';
   document.getElementById('item-desc').value = '';
+  document.getElementById('item-date').value = '';
   clearFlightFields('item');
-  document.querySelectorAll('#item-share-members input').forEach(cb => cb.checked = false);
+  document.querySelectorAll('#item-share-members input[type=checkbox]').forEach(cb => cb.checked = false);
+  document.querySelectorAll('#item-cover-members input[type=radio]').forEach(r => r.checked = false);
   const subsidyCheck = document.getElementById('item-subsidy-check');
   if (subsidyCheck) subsidyCheck.checked = false;
   document.getElementById('item-subsidy-row')?.classList.add('hidden');
+  document.getElementById('item-cover-payer')?.classList.add('hidden');
   await loadBudgetItems();
 }
 
 async function deleteBudgetItem(id) {
   await sb.from('budget_items').delete().eq('id', id);
   await loadBudgetItems();
+}
+
+async function deleteTrip(tripId, tripName) {
+  const revert = confirm(
+    `¿Eliminar el viaje "${tripName}"?\n\n` +
+    `Si aceptas, elige también qué hacer con La Canasta:\n` +
+    `- OK → revertir los movimientos relacionados con este viaje en La Canasta\n` +
+    `- Cancelar → conservar los movimientos en La Canasta`
+  );
+  if (revert === null) return;
+
+  if (revert) {
+    try {
+      const { data: link } = await sb.from('canasta_trip_links')
+        .select('canasta_trip_code').eq('user_id', currentUser.id).eq('trip_id', tripId).single();
+      if (link?.canasta_trip_code) {
+        const { data: profileRow } = await sb.from('canasta_profiles').select('data').eq('user_id', currentUser.id).single();
+        if (profileRow?.data) {
+          const profile = profileRow.data;
+          const before = (profile.transactions || []).length;
+          profile.transactions = (profile.transactions || []).filter(
+            t => t.bonVoyageTripCode !== link.canasta_trip_code
+          );
+          if (profile.transactions.length !== before) {
+            await sb.from('canasta_profiles').upsert(
+              { user_id: currentUser.id, data: profile, updated_at: new Date().toISOString() },
+              { onConflict: 'user_id' }
+            );
+          }
+        }
+      }
+    } catch(e) { console.warn('Canasta reversal error:', e); }
+  }
+
+  await sb.from('trips').delete().eq('id', tripId);
+  myTrips = myTrips.filter(t => t.id !== tripId);
+  renderTrips();
 }
 
 // ===== CANASTA INTEGRATION =====
@@ -837,7 +933,14 @@ async function loadCanastaLink() {
     .eq('trip_id', currentTrip.id)
     .single();
   currentCanastaLink = data || null;
+  if (currentCanastaLink) {
+    const { data: pr } = await sb.from('canasta_profiles').select('data').eq('user_id', currentUser.id).single();
+    canastaProfileData = pr?.data || null;
+  } else {
+    canastaProfileData = null;
+  }
   renderCanastaLinkPanel();
+  updatePaymentSourceOptions();
 }
 
 function renderCanastaLinkPanel() {
@@ -872,44 +975,95 @@ async function linkCanastaTrip() {
     { user_id: currentUser.id, trip_id: currentTrip.id, canasta_trip_code: code },
     { onConflict: 'user_id,trip_id' }
   );
-  if (!error) { currentCanastaLink = { canasta_trip_code: code }; renderCanastaLinkPanel(); }
+  if (!error) {
+    currentCanastaLink = { canasta_trip_code: code };
+    const { data: pr } = await sb.from('canasta_profiles').select('data').eq('user_id', currentUser.id).single();
+    canastaProfileData = pr?.data || null;
+    renderCanastaLinkPanel();
+    updatePaymentSourceOptions();
+  }
 }
 
 async function unlinkCanastaTrip() {
   await sb.from('canasta_trip_links').delete()
     .eq('user_id', currentUser.id).eq('trip_id', currentTrip.id);
   currentCanastaLink = null;
+  canastaProfileData = null;
   renderCanastaLinkPanel();
+  updatePaymentSourceOptions();
 }
 
-async function syncExpenseToCanasta(item, paymentSource, fullAmount) {
-  if (!currentCanastaLink || !paymentSource) return;
+function updatePaymentSourceOptions() {
+  const sel = document.getElementById('item-payment-source');
+  const psGroup = document.getElementById('item-payment-source-group');
+  if (!sel || !psGroup) return;
+  psGroup.classList.toggle('hidden', !currentCanastaLink);
+  if (!currentCanastaLink) return;
+  const p = canastaProfileData;
+  const cards = (p?.debts || []).filter(d => d.isCredit);
+  const savings = p?.savings || [];
+  const accounts = p?.bankAccounts || [];
+  let html = '<optgroup label="💰 Disponible">'
+    + '<option value="disponible:cash">💵 Efectivo</option>'
+    + accounts.map(a => `<option value="disponible:cuenta:${a.id}">${escapeHtml(a.name || 'Cuenta')}</option>`).join('')
+    + '</optgroup>';
+  html += '<optgroup label="🐷 Ahorros">'
+    + (savings.length
+        ? savings.map(s => `<option value="ahorros:${s.id}">${s.emoji||'🐷'} ${escapeHtml(s.name)}</option>`).join('')
+        : '<option value="ahorros:general">🐷 Ahorros del viaje</option>')
+    + '</optgroup>';
+  html += '<optgroup label="💳 Tarjeta de crédito">'
+    + (cards.length
+        ? cards.map(c => `<option value="tarjeta:${c.id}">${escapeHtml(c.name)}</option>`).join('')
+        : '<option value="tarjeta:general">💳 Tarjeta de crédito</option>')
+    + '</optgroup>';
+  html += '<option value="cover">💸 Alguien más pagó por mí</option>';
+  sel.innerHTML = html;
+}
+
+function handlePaymentSourceChange() {
+  const val = document.getElementById('item-payment-source')?.value;
+  document.getElementById('item-cover-payer')?.classList.toggle('hidden', val !== 'cover');
+}
+
+async function syncExpenseToCanasta(item, paymentVal, fullAmount, overrideUserId) {
+  if (!paymentVal || paymentVal === 'cover') return;
+  const uid = overrideUserId || currentUser.id;
+  const tripLink = overrideUserId ? null : currentCanastaLink;
   try {
-    const { data: profileRow } = await sb.from('canasta_profiles')
-      .select('data').eq('user_id', currentUser.id).single();
+    const { data: profileRow } = await sb.from('canasta_profiles').select('data').eq('user_id', uid).single();
     if (!profileRow) return;
     const profile = profileRow.data || {};
     if (!profile.transactions) profile.transactions = [];
     const cat = CATEGORIES.find(c => c.key === item.category);
-    const isAhorro = paymentSource === 'ahorros';
+    const [pType, pId, pSubId] = paymentVal.split(':');
+    const isAhorro = pType === 'ahorros';
+    const expDate = item.expense_date || new Date().toISOString().split('T')[0];
     const tx = {
       id: 'bv_' + Date.now(),
       type: isAhorro ? 'ahorro' : 'expense',
       amount: isAhorro ? -Math.abs(fullAmount) : fullAmount,
       currency: item.currency,
       category: `✈️ Viajes · ${cat ? cat.name : item.category}`,
-      date: new Date().toISOString().split('T')[0],
+      date: expDate,
       description: item.description || (cat ? cat.name : item.category),
-      paymentSource,
-      bonVoyageTripCode: currentCanastaLink.canasta_trip_code,
+      paymentSource: pType,
+      bonVoyageTripCode: tripLink?.canasta_trip_code || null,
     };
     if (isAhorro) {
-      const saving = (profile.savings || []).find(s => s.code === currentCanastaLink.canasta_trip_code);
-      if (saving) tx.savingId = saving.id;
+      const savingId = pId !== 'general' ? pId : null;
+      const saving = savingId
+        ? (profile.savings || []).find(s => s.id === savingId)
+        : (profile.savings || []).find(s => s.code === currentCanastaLink?.canasta_trip_code);
+      if (saving) { tx.savingId = saving.id; }
+    } else if (pType === 'tarjeta' && pId && pId !== 'general') {
+      tx.debtId = pId;
+    } else if (pType === 'disponible' && pId === 'cuenta' && pSubId) {
+      tx.bankAccountId = pSubId;
     }
     profile.transactions.push(tx);
     await sb.from('canasta_profiles').upsert(
-      { user_id: currentUser.id, data: profile, updated_at: new Date().toISOString() },
+      { user_id: uid, data: profile, updated_at: new Date().toISOString() },
       { onConflict: 'user_id' }
     );
   } catch(e) { console.warn('Canasta sync error:', e); }
@@ -1007,7 +1161,7 @@ function renderEventBody(ev) {
             const cat = CATEGORIES.find(c => c.key === i.category);
             const lbl = i.member_id ? (i.member_id === currentUser.id ? 'Personal' : 'Compartido') : 'Común';
             const flightInfo = i.category === 'flights' && i.flight_origin
-              ? `<div style="font-size:.78rem;color:var(--accent2);font-weight:600;margin-top:.15rem">✈️ ${escapeHtml(i.flight_origin)} → ${escapeHtml(i.flight_destination||'?')}${i.flight_departure?' · '+i.flight_departure.replace('T',' ').slice(0,16):''}${i.flight_layover?' · Escala: '+escapeHtml(i.flight_layover):''}</div>` : '';
+              ? `<div style="font-size:.78rem;color:var(--accent2);font-weight:600;margin-top:.15rem">✈️ ${escapeHtml(i.flight_origin)} → ${escapeHtml(i.flight_destination||'?')}${i.flight_number?' · '+escapeHtml(i.flight_number):''}${i.flight_departure?' · '+i.flight_departure.replace('T',' ').slice(0,16):''}${i.flight_layover?' · Escala: '+escapeHtml(i.flight_layover):''}</div>` : '';
             return `<div class="event-expense-row">
               <div>
                 <span>${cat ? cat.icon : ''} ${escapeHtml(i.description || (cat ? cat.name : i.category))}</span>
@@ -1101,11 +1255,15 @@ function getFlightFields(prefix) {
     flight_departure:   g('flight-dep')?.value || null,
     flight_arrival:     g('flight-arr')?.value || null,
     flight_layover:     g('flight-layover')?.value.trim() || null,
+    flight_number:      g('flight-number')?.value.trim() || null,
+    share_flight_info:  g('flight-share')?.checked || false,
   };
 }
 function clearFlightFields(prefix) {
-  ['flight-origin','flight-dest','flight-dep','flight-arr','flight-layover']
+  ['flight-origin','flight-dest','flight-dep','flight-arr','flight-layover','flight-number']
     .forEach(id => { const el = document.getElementById(prefix + '-' + id); if (el) el.value = ''; });
+  const shareEl = document.getElementById(prefix + '-flight-share');
+  if (shareEl) shareEl.checked = false;
   const ff = document.getElementById(prefix + '-flight-fields');
   if (ff) ff.classList.add('hidden');
 }
@@ -1165,15 +1323,19 @@ function shareCheckboxesHtml(prefix) {
 }
 
 async function loadPendingRequests() {
-  const { data: requests } = await sb.from('expense_share_requests')
-    .select('*, budget_items(*)')
-    .eq('to_user_id', currentUser.id)
-    .eq('status', 'pending');
-  if (!requests || requests.length === 0) { pendingRequests = []; renderPendingRequests(); return; }
-  const senderIds = [...new Set(requests.map(r => r.from_user_id))];
-  const { data: profiles } = await sb.from('profiles').select('user_id, display_name').in('user_id', senderIds);
+  const [{ data: shareReqs }, { data: coverReqs }] = await Promise.all([
+    sb.from('expense_share_requests').select('*, budget_items(*)').eq('to_user_id', currentUser.id).eq('status', 'pending'),
+    sb.from('payment_cover_requests').select('*, budget_items(*)').eq('to_user_id', currentUser.id).eq('status', 'pending'),
+  ]);
+  const allReqs = [...(shareReqs || []), ...(coverReqs || [])];
+  if (allReqs.length === 0) { pendingRequests = []; renderPendingRequests(); return; }
+  const senderIds = [...new Set(allReqs.map(r => r.from_user_id))];
+  const { data: profiles } = await sb.from('profiles').select('user_id, display_name').in('user_id', senderIds.length ? senderIds : ['00000000-0000-0000-0000-000000000000']);
   const nm = {}; (profiles || []).forEach(p => nm[p.user_id] = p.display_name);
-  pendingRequests = requests.map(r => ({ ...r, from_name: nm[r.from_user_id] || 'Alguien' }));
+  pendingRequests = [
+    ...(shareReqs || []).map(r => ({ ...r, _type: 'share', from_name: nm[r.from_user_id] || 'Alguien' })),
+    ...(coverReqs || []).map(r => ({ ...r, _type: 'cover', from_name: nm[r.from_user_id] || 'Alguien' })),
+  ];
   renderPendingRequests();
 }
 
@@ -1188,10 +1350,26 @@ function renderPendingRequests() {
       ${pendingRequests.map(r => {
         const item = r.budget_items;
         const cat = CATEGORIES.find(c => c.key === item?.category);
-        const flightRoute = item?.flight_origin ? ` · ✈️ ${escapeHtml(item.flight_origin)} → ${escapeHtml(item.flight_destination||'?')}` : '';
+        const flightRoute = item?.flight_origin ? ` · ✈️ ${escapeHtml(item.flight_origin)} → ${escapeHtml(item.flight_destination||'?')}${item.flight_number ? ' ' + escapeHtml(item.flight_number) : ''}` : '';
+        const dateStr = item?.expense_date ? ` · ${new Date(item.expense_date + 'T12:00:00').toLocaleDateString('es-CO', { day:'numeric', month:'short' })}` : '';
+        if (r._type === 'cover') {
+          return `<div class="request-card">
+            <div class="from">💸 ${escapeHtml(r.from_name)} pide que pagues por:</div>
+            <div class="detail">${cat ? cat.icon : ''} ${escapeHtml(item?.description || (cat ? cat.name : item?.category || ''))}${dateStr}${flightRoute}</div>
+            <div style="margin-top:.8rem">
+              <label style="font-size:.82rem;color:var(--ts)">¿Cuánto te costó?</label>
+              <div style="display:flex;gap:.6rem;margin-top:.4rem;align-items:center;flex-wrap:wrap">
+                <input type="number" id="cover-amt-${r.id}" placeholder="0.00" style="width:130px;padding:.45rem .7rem;border:1px solid var(--border);border-radius:var(--rs);font-family:inherit;font-size:.88rem">
+                <span style="font-size:.82rem;color:var(--ts)">${item?.currency||''}</span>
+                <button class="btn btn-primary" style="width:auto;padding:.5rem 1rem;font-size:.88rem" onclick="acceptCoverRequest('${r.id}','${item?.id}','${item?.currency||''}','${item?.trip_id||r.trip_id}')">✓ Aceptar</button>
+                <button class="btn btn-secondary" style="width:auto;padding:.5rem 1rem;font-size:.88rem" onclick="rejectCoverRequest('${r.id}')">Rechazar</button>
+              </div>
+            </div>
+          </div>`;
+        }
         return `<div class="request-card">
           <div class="from">${escapeHtml(r.from_name)} quiere compartir contigo:</div>
-          <div class="detail">${cat ? cat.icon : ''} ${escapeHtml(item?.description || (cat ? cat.name : item?.category || ''))} · ${Number(item?.amount||0).toLocaleString()} ${item?.currency||''}${flightRoute}</div>
+          <div class="detail">${cat ? cat.icon : ''} ${escapeHtml(item?.description || (cat ? cat.name : item?.category || ''))} · ${Number(item?.amount||0).toLocaleString()} ${item?.currency||''}${dateStr}${flightRoute}</div>
           <div style="display:flex;gap:.6rem;margin-top:.8rem">
             <button class="btn btn-primary" style="width:auto;padding:.5rem 1.1rem;font-size:.88rem" onclick="respondToRequest('${r.id}','accepted','${r.budget_item_id}')">✓ Aceptar</button>
             <button class="btn btn-secondary" style="width:auto;padding:.5rem 1.1rem;font-size:.88rem" onclick="respondToRequest('${r.id}','rejected',null)">Rechazar</button>
@@ -1212,14 +1390,46 @@ async function respondToRequest(requestId, status, budgetItemId) {
         member_id: currentUser.id, category: orig.category,
         amount: orig.amount, currency: orig.currency,
         description: orig.description, created_by: currentUser.id,
+        expense_date: orig.expense_date,
         flight_origin: orig.flight_origin, flight_destination: orig.flight_destination,
         flight_departure: orig.flight_departure, flight_arrival: orig.flight_arrival,
-        flight_layover: orig.flight_layover,
+        flight_layover: orig.flight_layover, flight_number: orig.flight_number,
+        share_flight_info: orig.share_flight_info,
       });
     }
   }
   await loadPendingRequests();
   if (currentTrip) await loadBudgetItems();
+}
+
+async function acceptCoverRequest(requestId, itemId, currency, tripId) {
+  const amtEl = document.getElementById('cover-amt-' + requestId);
+  const amount = parseFloat(amtEl?.value);
+  if (!amount || amount <= 0) { alert('Ingresa el monto que pagaste.'); return; }
+  await Promise.all([
+    sb.from('payment_cover_requests').update({ status: 'accepted', amount, currency }).eq('id', requestId),
+    sb.from('budget_items').update({ amount }).eq('id', itemId),
+  ]);
+  // Sync to the payer's La Canasta if they have this trip linked
+  const { data: link } = await sb.from('canasta_trip_links')
+    .select('canasta_trip_code').eq('user_id', currentUser.id).eq('trip_id', tripId).single();
+  if (link) {
+    const { data: item } = await sb.from('budget_items').select('*').eq('id', itemId).single();
+    if (item) {
+      const pseudoLink = link;
+      const savedLink = currentCanastaLink;
+      currentCanastaLink = pseudoLink;
+      await syncExpenseToCanasta({ ...item, amount }, 'disponible:cash', amount);
+      currentCanastaLink = savedLink;
+    }
+  }
+  await loadPendingRequests();
+  if (currentTrip) await loadBudgetItems();
+}
+
+async function rejectCoverRequest(requestId) {
+  await sb.from('payment_cover_requests').update({ status: 'rejected' }).eq('id', requestId);
+  await loadPendingRequests();
 }
 
 async function deleteEvent(id) {
