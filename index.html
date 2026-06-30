@@ -134,6 +134,13 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
 .gcal-btn{display:inline-flex;align-items:center;gap:.4rem;padding:.55rem 1.1rem;background:#1a73e8;color:#fff;border-radius:var(--rs);text-decoration:none;font-size:.86rem;font-weight:600;font-family:'Poppins',sans-serif;border:none;cursor:pointer;margin-bottom:.8rem;transition:.15s}
 .gcal-btn:hover{background:#1557b0}
 .event-add-expense-form{background:var(--bg);border:1px solid var(--border);border-radius:var(--rs);padding:1rem;margin-top:.8rem}
+/* SHARING */
+.request-card{background:var(--bg);border:1px solid var(--border);border-left:4px solid var(--accent3);border-radius:var(--r);padding:1rem 1.2rem;margin-bottom:.8rem}
+.request-card .from{font-weight:700;color:var(--tp)}
+.request-card .detail{font-size:.9rem;color:var(--ts);margin-top:.25rem}
+.share-check-list{display:flex;flex-direction:column;gap:.35rem;margin-top:.4rem}
+.share-check-list label{display:flex;align-items:center;gap:.6rem;font-size:.9rem;cursor:pointer}
+.notif-badge{display:inline-flex;align-items:center;justify-content:center;background:var(--accent);color:#fff;border-radius:50%;min-width:20px;height:20px;font-size:.72rem;font-weight:700;margin-left:.4rem;padding:0 4px}
 </style>
 </head>
 <body>
@@ -181,6 +188,8 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
 
   <!-- TRIPS LIST -->
   <div class="content" id="view-trips">
+    <div id="pending-requests-section" class="section hidden"></div>
+
     <div class="section">
       <h2>Tus viajes</h2>
       <div class="trip-grid" id="trips-grid"></div>
@@ -321,6 +330,10 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
             <label>Descripción (opcional)</label>
             <input type="text" id="item-desc" placeholder="Ej. Vuelo Bogotá–Madrid">
           </div>
+          <div class="form-group hidden" id="item-share-group">
+            <label>Compartir este gasto con (opcional)</label>
+            <div class="share-check-list" id="item-share-members"></div>
+          </div>
           <div class="error-msg" id="item-error"></div>
           <button class="btn btn-primary" onclick="addBudgetItem()">Agregar gasto</button>
         </div>
@@ -417,6 +430,8 @@ let currentTripMembers = [];
 let currentTripItems = [];
 let currentTripEvents = [];
 let expandedEventId = null;
+let memberNames = {};
+let pendingRequests = [];
 
 // ===== AUTH =====
 function switchAuthTab(tab) {
@@ -469,6 +484,7 @@ async function onLoggedIn() {
   showPage('pg-app');
   await loadTrips();
   await loadCanastaLinkStatus();
+  await loadPendingRequests();
 }
 
 // ===== PAGES =====
@@ -626,6 +642,7 @@ function backToTrips() {
   currentTripEvents = [];
   expandedEventId = null;
   showTripsView();
+  loadPendingRequests();
 }
 
 async function loadMembers() {
@@ -635,6 +652,18 @@ async function loadMembers() {
   const { data: profiles } = await sb.from('profiles').select('user_id, display_name').in('user_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
   const nameMap = {};
   (profiles || []).forEach(p => nameMap[p.user_id] = p.display_name);
+  memberNames = nameMap;
+
+  // Populate share checkboxes in budget form
+  const others = currentTripMembers.filter(m => m.user_id !== currentUser.id);
+  const shareEl = document.getElementById('item-share-members');
+  const shareGroup = document.getElementById('item-share-group');
+  if (shareEl && others.length > 0) {
+    shareEl.innerHTML = others.map(m => `
+      <label><input type="checkbox" data-uid="${m.user_id}"> ${escapeHtml(nameMap[m.user_id] || 'Viajero')}</label>
+    `).join('');
+    shareGroup.classList.remove('hidden');
+  }
 
   document.getElementById('members-list').innerHTML = currentTripMembers.map(m => `
     <div class="member-row">
@@ -718,16 +747,24 @@ async function addBudgetItem() {
   if (!amount || amount <= 0) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
 
   const flightData = category === 'flights' ? getFlightFields('item') : {};
-  const { error } = await sb.from('budget_items').insert({
+  const sharedWith = getSharedUids('item-share-members');
+  const { data: savedItem, error } = await sb.from('budget_items').insert({
     trip_id: currentTrip.id,
     member_id: scope === 'personal' ? currentUser.id : null,
     category, amount, currency, description, created_by: currentUser.id,
     ...flightData,
-  });
+  }).select().single();
   if (error) { errorEl.textContent = error.message; return; }
+  if (savedItem && sharedWith.length > 0) {
+    await Promise.all(sharedWith.map(uid => sb.from('expense_share_requests').insert({
+      trip_id: currentTrip.id, budget_item_id: savedItem.id,
+      from_user_id: currentUser.id, to_user_id: uid,
+    })));
+  }
   document.getElementById('item-amount').value = '';
   document.getElementById('item-desc').value = '';
   clearFlightFields('item');
+  document.querySelectorAll('#item-share-members input').forEach(cb => cb.checked = false);
   await loadBudgetItems();
 }
 
@@ -898,6 +935,7 @@ function renderEventBody(ev) {
         <div class="form-group" style="margin-bottom:.6rem"><label>Descripción (opcional)</label>
           <input type="text" id="ev-desc-${ev.id}" placeholder="Ej. Uber al museo, entrada, almuerzo…">
         </div>
+        ${shareCheckboxesHtml('ev-' + ev.id)}
         <div class="error-msg" id="ev-error-${ev.id}"></div>
         <div class="row">
           <button class="btn btn-secondary" onclick="toggleEvAddForm('${ev.id}')">Cancelar</button>
@@ -954,15 +992,100 @@ async function addEventExpense(eventId) {
   errorEl.textContent = '';
   if (!amount || amount <= 0) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
   const flightData = category === 'flights' ? getFlightFields('ev-' + eventId) : {};
-  const { error } = await sb.from('budget_items').insert({
+  const sharedWith = getSharedUids('ev-' + eventId + '-share-members');
+  const { data: savedItem, error } = await sb.from('budget_items').insert({
     trip_id: currentTrip.id, event_id: eventId,
     member_id: scope === 'personal' ? currentUser.id : null,
     category, amount, currency, description, created_by: currentUser.id,
     ...flightData,
-  });
+  }).select().single();
   if (error) { errorEl.textContent = error.message; return; }
+  if (savedItem && sharedWith.length > 0) {
+    await Promise.all(sharedWith.map(uid => sb.from('expense_share_requests').insert({
+      trip_id: currentTrip.id, budget_item_id: savedItem.id,
+      from_user_id: currentUser.id, to_user_id: uid,
+    })));
+  }
   await loadBudgetItems();
   renderEvents();
+}
+
+// ===== SHARING =====
+function getSharedUids(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return [];
+  return Array.from(el.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.dataset.uid);
+}
+
+function shareCheckboxesHtml(prefix) {
+  const others = currentTripMembers.filter(m => m.user_id !== currentUser.id);
+  if (others.length === 0) return '';
+  return `
+    <div class="form-group" style="margin-bottom:.6rem">
+      <label>Compartir este gasto con (opcional)</label>
+      <div class="share-check-list" id="${prefix}-share-members">
+        ${others.map(m => `<label><input type="checkbox" data-uid="${m.user_id}"> ${escapeHtml(memberNames[m.user_id] || 'Viajero')}</label>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function loadPendingRequests() {
+  const { data: requests } = await sb.from('expense_share_requests')
+    .select('*, budget_items(*)')
+    .eq('to_user_id', currentUser.id)
+    .eq('status', 'pending');
+  if (!requests || requests.length === 0) { pendingRequests = []; renderPendingRequests(); return; }
+  const senderIds = [...new Set(requests.map(r => r.from_user_id))];
+  const { data: profiles } = await sb.from('profiles').select('user_id, display_name').in('user_id', senderIds);
+  const nm = {}; (profiles || []).forEach(p => nm[p.user_id] = p.display_name);
+  pendingRequests = requests.map(r => ({ ...r, from_name: nm[r.from_user_id] || 'Alguien' }));
+  renderPendingRequests();
+}
+
+function renderPendingRequests() {
+  const el = document.getElementById('pending-requests-section');
+  if (!el) return;
+  if (pendingRequests.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <h2>📬 Solicitudes de gastos <span class="notif-badge">${pendingRequests.length}</span></h2>
+    <div style="margin-top:.8rem">
+      ${pendingRequests.map(r => {
+        const item = r.budget_items;
+        const cat = CATEGORIES.find(c => c.key === item?.category);
+        const flightRoute = item?.flight_origin ? ` · ✈️ ${escapeHtml(item.flight_origin)} → ${escapeHtml(item.flight_destination||'?')}` : '';
+        return `<div class="request-card">
+          <div class="from">${escapeHtml(r.from_name)} quiere compartir contigo:</div>
+          <div class="detail">${cat ? cat.icon : ''} ${escapeHtml(item?.description || (cat ? cat.name : item?.category || ''))} · ${Number(item?.amount||0).toLocaleString()} ${item?.currency||''}${flightRoute}</div>
+          <div style="display:flex;gap:.6rem;margin-top:.8rem">
+            <button class="btn btn-primary" style="width:auto;padding:.5rem 1.1rem;font-size:.88rem" onclick="respondToRequest('${r.id}','accepted','${r.budget_item_id}')">✓ Aceptar</button>
+            <button class="btn btn-secondary" style="width:auto;padding:.5rem 1.1rem;font-size:.88rem" onclick="respondToRequest('${r.id}','rejected',null)">Rechazar</button>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+async function respondToRequest(requestId, status, budgetItemId) {
+  await sb.from('expense_share_requests').update({ status }).eq('id', requestId);
+  if (status === 'accepted' && budgetItemId) {
+    const { data: orig } = await sb.from('budget_items').select('*').eq('id', budgetItemId).single();
+    if (orig) {
+      await sb.from('budget_items').insert({
+        trip_id: orig.trip_id, event_id: orig.event_id || null,
+        member_id: currentUser.id, category: orig.category,
+        amount: orig.amount, currency: orig.currency,
+        description: orig.description, created_by: currentUser.id,
+        flight_origin: orig.flight_origin, flight_destination: orig.flight_destination,
+        flight_departure: orig.flight_departure, flight_arrival: orig.flight_arrival,
+        flight_layover: orig.flight_layover,
+      });
+    }
+  }
+  await loadPendingRequests();
+  if (currentTrip) await loadBudgetItems();
 }
 
 async function deleteEvent(id) {
