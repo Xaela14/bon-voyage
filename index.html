@@ -158,9 +158,15 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
       <div class="tab active" id="tab-login" onclick="switchAuthTab('login')">Ingresar</div>
       <div class="tab" id="tab-signup" onclick="switchAuthTab('signup')">Crear cuenta</div>
     </div>
-    <div class="form-group" id="signup-name-group" style="display:none">
-      <label>Tu nombre</label>
-      <input type="text" id="auth-name" placeholder="Cómo te van a ver en los viajes">
+    <div id="signup-name-group" style="display:none">
+      <div class="form-group">
+        <label>Tu nombre</label>
+        <input type="text" id="auth-name" placeholder="Cómo te van a ver en los viajes">
+      </div>
+      <div class="form-group">
+        <label>Fecha de nacimiento</label>
+        <input type="date" id="auth-dob">
+      </div>
     </div>
     <div class="form-group">
       <label>Email</label>
@@ -180,7 +186,7 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
   <div class="topbar">
     <span class="topbar-title">✈️ BON VOYAGE</span>
     <div>
-      <span class="muted" id="welcome-name"></span>
+      <button class="btn-link" onclick="editMyProfile()" id="welcome-name" style="font-weight:400;color:var(--muted)"></button>
       &nbsp;·&nbsp;
       <button class="btn-link" onclick="logout()">Salir</button>
     </div>
@@ -492,11 +498,12 @@ async function submitAuth() {
 
   if (authTab === 'signup') {
     const name = document.getElementById('auth-name').value.trim();
+    const dob  = document.getElementById('auth-dob').value || null;
     if (!name) { errorEl.textContent = 'Falta ingresar tu nombre.'; return; }
     const { data, error } = await sb.auth.signUp({ email, password });
     if (error) { errorEl.textContent = error.message; return; }
     if (data.user) {
-      await sb.from('profiles').upsert({ user_id: data.user.id, display_name: name });
+      await sb.from('profiles').upsert({ user_id: data.user.id, display_name: name, date_of_birth: dob });
     }
     if (!data.session) {
       errorEl.textContent = 'Cuenta creada. Puedes revisar tu email para confirmar y después ingresar.';
@@ -521,16 +528,9 @@ async function onLoggedIn() {
   currentUser = user;
   let { data: profile } = await sb.from('profiles').select('display_name').eq('user_id', user.id).single();
   if (!profile) {
-    const { data: canasta } = await sb.from('canasta_profiles').select('data').eq('user_id', user.id).single();
-    const canastaName = canasta?.data?.name;
-    if (canastaName) {
-      await sb.from('profiles').upsert({ user_id: user.id, display_name: canastaName });
-      profile = { display_name: canastaName };
-    } else {
-      const name = await askDisplayName();
-      await sb.from('profiles').upsert({ user_id: user.id, display_name: name });
-      profile = { display_name: name };
-    }
+    const { name, dob } = await askDisplayNameAndDOB();
+    await sb.from('profiles').upsert({ user_id: user.id, display_name: name, date_of_birth: dob || null });
+    profile = { display_name: name };
   }
   document.getElementById('welcome-name').textContent = profile.display_name;
   showPage('pg-app');
@@ -539,7 +539,7 @@ async function onLoggedIn() {
   await loadPendingRequests();
 }
 
-function askDisplayName() {
+function askDisplayNameAndDOB() {
   return new Promise(resolve => {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
@@ -547,27 +547,97 @@ function askDisplayName() {
       <div style="background:#fff;border-radius:16px;padding:2rem;max-width:340px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.15)">
         <div style="font-size:1.5rem;margin-bottom:.3rem">✈️</div>
         <h2 style="margin:0 0 .4rem;font-size:1.1rem;color:#1a1a2e">¡Bienvenido a Bon Voyage!</h2>
-        <p style="margin:0 0 1.2rem;font-size:.88rem;color:#666">¿Cómo quieres que te vean los demás viajeros?</p>
-        <input id="setup-name" type="text" placeholder="Tu nombre" maxlength="40"
+        <p style="margin:0 0 1.2rem;font-size:.88rem;color:#666">Completa tu perfil para que los demás viajeros te reconozcan.</p>
+        <label style="font-size:.82rem;font-weight:600;color:#444;display:block;margin-bottom:.3rem">Tu nombre</label>
+        <input id="setup-name" type="text" placeholder="Cómo te van a ver en los viajes" maxlength="40"
           style="width:100%;padding:.75rem;border:1.5px solid #ddd;border-radius:10px;font-size:1rem;box-sizing:border-box;outline:none">
-        <button id="setup-btn" style="margin-top:1rem;width:100%;padding:.8rem;background:#e85d04;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer">
+        <label style="font-size:.82rem;font-weight:600;color:#444;display:block;margin:.9rem 0 .3rem">Fecha de nacimiento</label>
+        <input id="setup-dob" type="date"
+          style="width:100%;padding:.75rem;border:1.5px solid #ddd;border-radius:10px;font-size:1rem;box-sizing:border-box;outline:none">
+        <button id="setup-btn" style="margin-top:1.2rem;width:100%;padding:.8rem;background:#e85d04;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer">
           Continuar
         </button>
         <div id="setup-err" style="color:#e85d04;font-size:.8rem;margin-top:.5rem;min-height:1rem"></div>
       </div>`;
     document.body.appendChild(overlay);
-    const input = overlay.querySelector('#setup-name');
-    const btn   = overlay.querySelector('#setup-btn');
-    const err   = overlay.querySelector('#setup-err');
-    input.focus();
+    const nameInput = overlay.querySelector('#setup-name');
+    const dobInput  = overlay.querySelector('#setup-dob');
+    const btn       = overlay.querySelector('#setup-btn');
+    const err       = overlay.querySelector('#setup-err');
+    nameInput.focus();
     const confirm = () => {
-      const val = input.value.trim();
-      if (!val) { err.textContent = 'Escribe tu nombre para continuar.'; return; }
+      const name = nameInput.value.trim();
+      if (!name) { err.textContent = 'Escribe tu nombre para continuar.'; return; }
       document.body.removeChild(overlay);
-      resolve(val);
+      resolve({ name, dob: dobInput.value || null });
     };
     btn.addEventListener('click', confirm);
-    input.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); });
+    nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') dobInput.focus(); });
+    dobInput.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); });
+  });
+}
+
+async function loadCanastaLinkStatus() {
+  const el = document.getElementById('canasta-status');
+  if (!el || !currentUser) return;
+  const { data } = await sb.from('canasta_profiles').select('user_id').eq('user_id', currentUser.id).single();
+  if (data) {
+    el.innerHTML = '<span style="color:#2a9d8f">✅ Tu cuenta de La Canasta está vinculada automáticamente.</span>';
+    const emailInput = document.getElementById('canasta-email');
+    const linkBtn = document.querySelector('[onclick="linkCanasta()"]');
+    if (emailInput) emailInput.style.display = 'none';
+    if (linkBtn) linkBtn.style.display = 'none';
+  } else {
+    el.textContent = 'No se encontró una cuenta de La Canasta con este email. Si tienes una, asegúrate de usar el mismo email en ambas apps.';
+  }
+}
+
+async function linkCanasta() {
+  const el = document.getElementById('canasta-status');
+  const email = document.getElementById('canasta-email')?.value?.trim();
+  if (!email) { if (el) el.textContent = 'Ingresa tu email de La Canasta.'; return; }
+  if (email.toLowerCase() !== currentUser.email.toLowerCase()) {
+    if (el) el.innerHTML = '<span style="color:#e76f51">El email ingresado no coincide con el de tu cuenta actual. Bon Voyage y La Canasta deben usar el mismo email.</span>';
+    return;
+  }
+  const { data } = await sb.from('canasta_profiles').select('user_id').eq('user_id', currentUser.id).single();
+  if (data) {
+    if (el) el.innerHTML = '<span style="color:#2a9d8f">✅ ¡Vinculado! Tu cuenta de La Canasta está conectada.</span>';
+    document.getElementById('canasta-email').style.display = 'none';
+    document.querySelector('[onclick="linkCanasta()"]').style.display = 'none';
+  } else {
+    if (el) el.innerHTML = '<span style="color:#e76f51">No se encontró una cuenta de La Canasta con ese email.</span>';
+  }
+}
+
+async function editMyProfile() {
+  const { data: profile } = await sb.from('profiles').select('display_name, date_of_birth').eq('user_id', currentUser.id).single();
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:16px;padding:2rem;max-width:340px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+      <h2 style="margin:0 0 1.2rem;font-size:1.1rem;color:#1a1a2e">Editar perfil</h2>
+      <label style="font-size:.82rem;font-weight:600;color:#444;display:block;margin-bottom:.3rem">Nombre</label>
+      <input id="ep-name" type="text" value="${escapeHtml(profile?.display_name||'')}" maxlength="40"
+        style="width:100%;padding:.75rem;border:1.5px solid #ddd;border-radius:10px;font-size:1rem;box-sizing:border-box;outline:none">
+      <label style="font-size:.82rem;font-weight:600;color:#444;display:block;margin:.9rem 0 .3rem">Fecha de nacimiento</label>
+      <input id="ep-dob" type="date" value="${profile?.date_of_birth||''}"
+        style="width:100%;padding:.75rem;border:1.5px solid #ddd;border-radius:10px;font-size:1rem;box-sizing:border-box;outline:none">
+      <div style="display:flex;gap:.7rem;margin-top:1.2rem">
+        <button id="ep-cancel" style="flex:1;padding:.8rem;background:none;border:1.5px solid #ddd;border-radius:10px;font-size:.95rem;cursor:pointer">Cancelar</button>
+        <button id="ep-save" style="flex:1;padding:.8rem;background:#e85d04;color:#fff;border:none;border-radius:10px;font-size:.95rem;font-weight:600;cursor:pointer">Guardar</button>
+      </div>
+      <div id="ep-err" style="color:#e85d04;font-size:.8rem;margin-top:.5rem;min-height:1rem"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#ep-cancel').addEventListener('click', () => document.body.removeChild(overlay));
+  overlay.querySelector('#ep-save').addEventListener('click', async () => {
+    const name = overlay.querySelector('#ep-name').value.trim();
+    const dob  = overlay.querySelector('#ep-dob').value || null;
+    if (!name) { overlay.querySelector('#ep-err').textContent = 'El nombre no puede estar vacío.'; return; }
+    await sb.from('profiles').update({ display_name: name, date_of_birth: dob }).eq('user_id', currentUser.id);
+    document.getElementById('welcome-name').textContent = name;
+    document.body.removeChild(overlay);
   });
 }
 
