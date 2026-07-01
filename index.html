@@ -256,6 +256,8 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
       <p class="muted" id="trip-detail-meta"></p>
     </div>
 
+    <div id="contributions-reminder" class="hidden" style="margin-bottom:1rem"></div>
+
     <div class="trip-tabs">
       <button class="trip-tab active" id="trip-tab-budget" onclick="switchTripTab('budget')">💰 Presupuesto</button>
       <button class="trip-tab" id="trip-tab-itinerary" onclick="switchTripTab('itinerary')">📅 Itinerario</button>
@@ -354,23 +356,13 @@ p.sub{color:var(--ts);font-size:1.05rem;margin-top:.4rem}
             </div>
           </div>
           <div class="form-group hidden" id="item-share-group">
-            <label>Compartir este gasto con (opcional)</label>
-            <div class="share-check-list" id="item-share-members"></div>
-            <div id="item-subsidy-row" class="hidden" style="margin-top:.7rem;padding:.65rem .8rem;background:var(--bg2);border-radius:var(--rs)">
-              <label style="display:block;cursor:pointer;font-size:.84rem;line-height:1.5">
-                <input type="checkbox" id="item-subsidy-check" style="margin-right:.4rem;vertical-align:middle">
-                Yo pagué por todos — el gasto se divide y solo yo lo registro en La Canasta
-              </label>
-            </div>
+            <label>Compartir gasto con</label>
+            <div id="item-share-members" style="display:flex;flex-direction:column;gap:.55rem;margin-top:.3rem"></div>
+            <div id="item-share-summary" class="hidden" style="margin-top:.6rem;padding:.5rem .8rem;background:var(--bg2);border-radius:var(--rs);font-size:.83rem"></div>
           </div>
           <div class="form-group hidden" id="item-payment-source-group">
             <label>Fuente de pago (La Canasta)</label>
-            <select id="item-payment-source" onchange="handlePaymentSourceChange()"></select>
-            <div id="item-cover-payer" class="hidden" style="margin-top:.6rem;padding:.65rem .8rem;background:var(--bg2);border-radius:var(--rs)">
-              <div style="font-size:.82rem;color:var(--ts);margin-bottom:.5rem;font-weight:500">¿Quién pagó por ti?</div>
-              <div id="item-cover-members"></div>
-              <div style="font-size:.75rem;color:var(--tm);margin-top:.5rem">Le llegará una notificación para que registre el monto exacto.</div>
-            </div>
+            <select id="item-payment-source"></select>
           </div>
           <div class="error-msg" id="item-error"></div>
           <button class="btn btn-primary" onclick="addBudgetItem()">Agregar gasto</button>
@@ -796,6 +788,7 @@ async function openTrip(tripId) {
   await loadBudgetItems();
   await loadEventsSilent();
   await loadCanastaLink();
+  await loadContributions();
   showTripDetailView();
   switchTripTab('budget');
   const dateEl = document.getElementById('item-date');
@@ -820,21 +813,27 @@ async function loadMembers() {
   (profiles || []).forEach(p => nameMap[p.user_id] = p.display_name);
   memberNames = nameMap;
 
-  // Populate share checkboxes in budget form
+  // Populate share member list in budget form
   const others = currentTripMembers.filter(m => m.user_id !== currentUser.id);
   const shareEl = document.getElementById('item-share-members');
   const shareGroup = document.getElementById('item-share-group');
   if (shareEl && others.length > 0) {
     shareEl.innerHTML = others.map(m => `
-      <label><input type="checkbox" data-uid="${m.user_id}" onchange="updateSubsidyRow()"> ${escapeHtml(nameMap[m.user_id] || 'Viajero')}</label>
+      <div id="sc-row-${m.user_id}">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer;font-size:.9rem">
+          <input type="checkbox" data-uid="${m.user_id}" onchange="toggleContribInput('${m.user_id}')">
+          <span>${escapeHtml(nameMap[m.user_id] || 'Viajero')}</span>
+        </label>
+        <div id="sci-${m.user_id}" style="display:none;margin-top:.3rem;padding-left:1.6rem;align-items:center;gap:.4rem">
+          <input type="number" id="amt-${m.user_id}" placeholder="0.00" min="0" step="0.01" oninput="updateShareSummary()"
+            style="width:120px;padding:.38rem .6rem;border:1.5px solid var(--border);border-radius:var(--rs);font-size:.88rem;font-family:'Poppins',sans-serif">
+          <span id="sc-cur-${m.user_id}" style="font-size:.82rem;color:var(--ts)"></span>
+        </div>
+      </div>
     `).join('');
     shareGroup.classList.remove('hidden');
-    const coverEl = document.getElementById('item-cover-members');
-    if (coverEl) coverEl.innerHTML = others.map(m => `
-      <label style="display:flex;align-items:center;gap:.5rem;font-size:.85rem;margin-bottom:.3rem;cursor:pointer">
-        <input type="radio" name="cover-payer" value="${m.user_id}"> ${escapeHtml(nameMap[m.user_id] || 'Viajero')}
-      </label>
-    `).join('');
+  } else if (shareGroup) {
+    shareGroup.classList.add('hidden');
   }
 
   document.getElementById('members-list').innerHTML = currentTripMembers.map(m => `
@@ -933,68 +932,48 @@ async function addBudgetItem() {
   errorEl.textContent = '';
 
   const paymentVal = currentCanastaLink ? (document.getElementById('item-payment-source')?.value || null) : null;
-  const isCover = paymentVal === 'cover';
-  const coverPayerUid = isCover
-    ? document.querySelector('#item-cover-members input[name="cover-payer"]:checked')?.value : null;
-
-  if (isCover && !coverPayerUid) { errorEl.textContent = 'Selecciona quién pagó por ti.'; return; }
-
   const rawAmount = parseFloat(document.getElementById('item-amount').value);
-  const amount = isCover ? 0 : rawAmount;
-  if (!isCover && (!rawAmount || rawAmount <= 0)) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
+  if (!rawAmount || rawAmount <= 0) { errorEl.textContent = 'Falta ingresar un monto válido.'; return; }
 
   const flightData = category === 'flights' ? getFlightFields('item') : {};
-  const sharedWith = getSharedUids('item-share-members');
-  const isSubsidy = document.getElementById('item-subsidy-check')?.checked && sharedWith.length > 0;
-  const nPeople = isSubsidy ? 1 + sharedWith.length : 1;
-  const consumedEach = isSubsidy ? amount / nPeople : null;
+  const contributions = getContributions();
 
   const { data: savedItem, error } = await sb.from('budget_items').insert({
     trip_id: currentTrip.id,
     member_id: scope === 'personal' ? currentUser.id : null,
-    category, amount, currency, description, created_by: currentUser.id,
+    category, amount: rawAmount, currency, description, created_by: currentUser.id,
     expense_date: expenseDate,
-    payment_source: isCover ? null : paymentVal,
-    amount_consumed: isSubsidy ? consumedEach : null,
+    payment_source: paymentVal,
     ...flightData,
   }).select().single();
   if (error) { errorEl.textContent = error.message; return; }
 
-  if (isCover && savedItem) {
-    await sb.from('payment_cover_requests').insert({
-      trip_id: currentTrip.id, item_id: savedItem.id,
-      from_user_id: currentUser.id, to_user_id: coverPayerUid,
+  if (savedItem && contributions.length > 0) {
+    await Promise.all(contributions.map(c => sb.from('expense_contributions').insert({
+      trip_id: currentTrip.id,
+      item_id: savedItem.id,
+      payer_id: currentUser.id,
+      contributor_id: c.uid,
+      amount_owed: c.amount,
       currency,
-    });
-  } else if (isSubsidy && sharedWith.length > 0) {
-    await Promise.all(sharedWith.map(uid => sb.from('budget_items').insert({
-      trip_id: currentTrip.id, member_id: uid,
-      category, amount: consumedEach, amount_consumed: consumedEach,
-      currency, description, created_by: currentUser.id,
-      expense_date: expenseDate, subsidy_from: currentUser.id,
-    })));
-  } else if (savedItem && sharedWith.length > 0) {
-    await Promise.all(sharedWith.map(uid => sb.from('expense_share_requests').insert({
-      trip_id: currentTrip.id, budget_item_id: savedItem.id,
-      from_user_id: currentUser.id, to_user_id: uid,
+      description: description || null,
     })));
   }
 
-  if (savedItem && currentCanastaLink && paymentVal && !isCover) {
-    await syncExpenseToCanasta(savedItem, paymentVal, amount);
+  if (savedItem && currentCanastaLink && paymentVal) {
+    await syncExpenseToCanasta(savedItem, paymentVal, rawAmount);
   }
 
   document.getElementById('item-amount').value = '';
   document.getElementById('item-desc').value = '';
   document.getElementById('item-date').value = '';
   clearFlightFields('item');
-  document.querySelectorAll('#item-share-members input[type=checkbox]').forEach(cb => cb.checked = false);
-  document.querySelectorAll('#item-cover-members input[type=radio]').forEach(r => r.checked = false);
-  const subsidyCheck = document.getElementById('item-subsidy-check');
-  if (subsidyCheck) subsidyCheck.checked = false;
-  document.getElementById('item-subsidy-row')?.classList.add('hidden');
-  document.getElementById('item-cover-payer')?.classList.add('hidden');
+  document.querySelectorAll('#item-share-members input[type=checkbox]').forEach(cb => { cb.checked = false; });
+  document.querySelectorAll('[id^="sci-"]').forEach(el => { el.style.display = 'none'; });
+  document.querySelectorAll('[id^="amt-"]').forEach(el => { if (el.tagName === 'INPUT') el.value = ''; });
+  document.getElementById('item-share-summary')?.classList.add('hidden');
   await loadBudgetItems();
+  await loadContributions();
 }
 
 async function deleteBudgetItem(id) {
@@ -1148,12 +1127,11 @@ function currencySelectOptions(selected = 'COP') {
 }
 
 function handlePaymentSourceChange() {
-  const val = document.getElementById('item-payment-source')?.value;
-  document.getElementById('item-cover-payer')?.classList.toggle('hidden', val !== 'cover');
+  // placeholder — kept for compatibility with payment source select
 }
 
 async function syncExpenseToCanasta(item, paymentVal, fullAmount, overrideUserId) {
-  if (!paymentVal || paymentVal === 'cover') return;
+  if (!paymentVal) return;
   const uid = overrideUserId || currentUser.id;
   const tripLink = overrideUserId ? null : currentCanastaLink;
   try {
@@ -1195,14 +1173,101 @@ async function syncExpenseToCanasta(item, paymentVal, fullAmount, overrideUserId
   } catch(e) { console.warn('Canasta sync error:', e); }
 }
 
-function updateSubsidyRow() {
-  const anyChecked = [...document.querySelectorAll('#item-share-members input')].some(cb => cb.checked);
-  const subsidyRow = document.getElementById('item-subsidy-row');
-  if (subsidyRow) subsidyRow.classList.toggle('hidden', !anyChecked);
-  if (!anyChecked) {
-    const sc = document.getElementById('item-subsidy-check');
-    if (sc) sc.checked = false;
+function toggleContribInput(uid) {
+  const cb = document.querySelector(`#sc-row-${uid} input[type=checkbox]`);
+  const inp = document.getElementById(`sci-${uid}`);
+  if (!inp) return;
+  inp.style.display = cb?.checked ? 'flex' : 'none';
+  if (!cb?.checked) { const a = document.getElementById(`amt-${uid}`); if (a) a.value = ''; }
+  updateShareSummary();
+}
+
+function updateShareSummary() {
+  const totalAmount = parseFloat(document.getElementById('item-amount')?.value) || 0;
+  const currency = document.getElementById('item-currency')?.value || '';
+  const contribs = getContributions();
+  (currentTripMembers || []).filter(m => m.user_id !== currentUser?.id).forEach(m => {
+    const cur = document.getElementById(`sc-cur-${m.user_id}`);
+    if (cur) cur.textContent = currency;
+  });
+  const summary = document.getElementById('item-share-summary');
+  if (!summary) return;
+  if (contribs.length === 0) { summary.classList.add('hidden'); return; }
+  const totalContrib = contribs.reduce((s, c) => s + c.amount, 0);
+  const myPortion = totalAmount - totalContrib;
+  summary.classList.remove('hidden');
+  const over = totalContrib > totalAmount + 0.001;
+  const color = over ? 'var(--red)' : Math.abs(myPortion) < 0.01 ? 'var(--green)' : 'var(--amber)';
+  summary.innerHTML = `<span style="color:${color}">${over ? '⚠️ ' : ''}Total: <strong>${totalAmount.toFixed(2)} ${currency}</strong> · Aportes de otros: <strong>${totalContrib.toFixed(2)} ${currency}</strong> · Tu parte: <strong>${myPortion.toFixed(2)} ${currency}</strong></span>`;
+}
+
+function getContributions() {
+  const contribs = [];
+  (currentTripMembers || []).filter(m => m.user_id !== currentUser?.id).forEach(m => {
+    const cb = document.querySelector(`#sc-row-${m.user_id} input[type=checkbox]`);
+    if (!cb?.checked) return;
+    const amt = parseFloat(document.getElementById(`amt-${m.user_id}`)?.value) || 0;
+    if (amt > 0) contribs.push({ uid: m.user_id, amount: amt });
+  });
+  return contribs;
+}
+
+async function loadContributions() {
+  if (!currentTrip || !currentUser) return;
+  const { data } = await sb.from('expense_contributions')
+    .select('*, budget_items(description, category, expense_date)')
+    .eq('trip_id', currentTrip.id)
+    .eq('status', 'pending');
+  renderContributionReminder(data || []);
+}
+
+function renderContributionReminder(contributions) {
+  const el = document.getElementById('contributions-reminder');
+  if (!el) return;
+  const iOwe = contributions.filter(c => c.contributor_id === currentUser.id);
+  const othersOwe = contributions.filter(c => c.payer_id === currentUser.id && c.contributor_id !== currentUser.id);
+  if (iOwe.length === 0 && othersOwe.length === 0) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  let html = '';
+  if (iOwe.length > 0) {
+    html += `<div style="background:var(--amber-bg);border:1.5px solid var(--amber);border-radius:var(--r);padding:1rem 1.2rem;margin-bottom:.8rem">
+      <div style="font-weight:700;color:var(--amber);margin-bottom:.6rem">💸 Tienes ${iOwe.length} gasto${iOwe.length>1?'s':''} por cubrir</div>
+      ${iOwe.map(c => {
+        const item = c.budget_items;
+        const cat = CATEGORIES.find(x => x.key === item?.category);
+        const dateStr = item?.expense_date ? new Date(item.expense_date+'T12:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'short'})+' · ' : '';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .6rem;background:rgba(255,255,255,.7);border-radius:var(--rs);margin-bottom:.4rem;flex-wrap:wrap;gap:.4rem">
+          <span style="font-size:.9rem">${cat?cat.icon:''} ${escapeHtml(item?.description||(cat?cat.name:item?.category||'Gasto'))} · <strong>${Number(c.amount_owed).toLocaleString()} ${c.currency}</strong> <span style="color:var(--ts);font-size:.8rem">· ${dateStr}${escapeHtml(memberNames[c.payer_id]||'compañero')}</span></span>
+          <button onclick="markContributionPaid('${c.id}')" style="padding:.35rem .85rem;background:var(--amber);color:#fff;border:none;border-radius:var(--rs);font-size:.82rem;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;white-space:nowrap">Marcar pagado</button>
+        </div>`;
+      }).join('')}
+    </div>`;
   }
+  if (othersOwe.length > 0) {
+    html += `<div style="background:var(--green-bg);border:1.5px solid var(--green);border-radius:var(--r);padding:1rem 1.2rem;margin-bottom:.8rem">
+      <div style="font-weight:700;color:var(--green);margin-bottom:.6rem">✅ ${othersOwe.length} gasto${othersOwe.length>1?'s':''} compartido${othersOwe.length>1?'s':''} pendiente${othersOwe.length>1?'s':''} de cobro</div>
+      ${othersOwe.map(c => {
+        const item = c.budget_items;
+        const cat = CATEGORIES.find(x => x.key === item?.category);
+        const dateStr = item?.expense_date ? new Date(item.expense_date+'T12:00:00').toLocaleDateString('es-CO',{day:'numeric',month:'short'})+' · ' : '';
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:.5rem .6rem;background:rgba(255,255,255,.7);border-radius:var(--rs);margin-bottom:.4rem;flex-wrap:wrap;gap:.4rem">
+          <span style="font-size:.9rem">${cat?cat.icon:''} ${escapeHtml(item?.description||(cat?cat.name:item?.category||'Gasto'))} · <strong>${Number(c.amount_owed).toLocaleString()} ${c.currency}</strong> <span style="color:var(--ts);font-size:.8rem">· ${dateStr}${escapeHtml(memberNames[c.contributor_id]||'viajero')}</span></span>
+          <button onclick="markContributionPaid('${c.id}')" style="padding:.35rem .85rem;background:var(--green);color:#fff;border:none;border-radius:var(--rs);font-size:.82rem;font-weight:600;cursor:pointer;font-family:'Poppins',sans-serif;white-space:nowrap">Confirmar pago</button>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+async function markContributionPaid(id) {
+  await sb.from('expense_contributions').update({ status: 'paid' }).eq('id', id);
+  await loadContributions();
+}
+
+async function markContributionPaidFromRequests(id) {
+  await sb.from('expense_contributions').update({ status: 'paid' }).eq('id', id);
+  await loadPendingRequests();
 }
 
 // ===== ITINERARY =====
@@ -1447,18 +1512,21 @@ function shareCheckboxesHtml(prefix) {
 }
 
 async function loadPendingRequests() {
-  const [{ data: shareReqs }, { data: coverReqs }] = await Promise.all([
+  const [{ data: shareReqs }, { data: myContribs }] = await Promise.all([
     sb.from('expense_share_requests').select('*, budget_items(*)').eq('to_user_id', currentUser.id).eq('status', 'pending'),
-    sb.from('payment_cover_requests').select('*, budget_items(*)').eq('to_user_id', currentUser.id).eq('status', 'pending'),
+    sb.from('expense_contributions')
+      .select('*, budget_items(description, category, amount, currency, expense_date), trips(name)')
+      .eq('contributor_id', currentUser.id).eq('status', 'pending'),
   ]);
-  const allReqs = [...(shareReqs || []), ...(coverReqs || [])];
-  if (allReqs.length === 0) { pendingRequests = []; renderPendingRequests(); return; }
-  const senderIds = [...new Set(allReqs.map(r => r.from_user_id))];
-  const { data: profiles } = await sb.from('profiles').select('user_id, display_name').in('user_id', senderIds.length ? senderIds : ['00000000-0000-0000-0000-000000000000']);
+  const shareList = shareReqs || [];
+  const contribList = myContribs || [];
+  if (shareList.length === 0 && contribList.length === 0) { pendingRequests = []; renderPendingRequests(); return; }
+  const allIds = [...new Set([...shareList.map(r => r.from_user_id), ...contribList.map(c => c.payer_id)])];
+  const { data: profiles } = await sb.from('profiles').select('user_id, display_name').in('user_id', allIds.length ? allIds : ['00000000-0000-0000-0000-000000000000']);
   const nm = {}; (profiles || []).forEach(p => nm[p.user_id] = p.display_name);
   pendingRequests = [
-    ...(shareReqs || []).map(r => ({ ...r, _type: 'share', from_name: nm[r.from_user_id] || 'Alguien' })),
-    ...(coverReqs || []).map(r => ({ ...r, _type: 'cover', from_name: nm[r.from_user_id] || 'Alguien' })),
+    ...shareList.map(r => ({ ...r, _type: 'share', from_name: nm[r.from_user_id] || 'Alguien' })),
+    ...contribList.map(c => ({ ...c, _type: 'contrib', payer_name: nm[c.payer_id] || 'Alguien' })),
   ];
   renderPendingRequests();
 }
@@ -1476,18 +1544,13 @@ function renderPendingRequests() {
         const cat = CATEGORIES.find(c => c.key === item?.category);
         const flightRoute = item?.flight_origin ? ` · ✈️ ${escapeHtml(item.flight_origin)} → ${escapeHtml(item.flight_destination||'?')}${item.flight_number ? ' ' + escapeHtml(item.flight_number) : ''}` : '';
         const dateStr = item?.expense_date ? ` · ${new Date(item.expense_date + 'T12:00:00').toLocaleDateString('es-CO', { day:'numeric', month:'short' })}` : '';
-        if (r._type === 'cover') {
-          return `<div class="request-card">
-            <div class="from">💸 ${escapeHtml(r.from_name)} pide que pagues por:</div>
-            <div class="detail">${cat ? cat.icon : ''} ${escapeHtml(item?.description || (cat ? cat.name : item?.category || ''))}${dateStr}${flightRoute}</div>
-            <div style="margin-top:.8rem">
-              <label style="font-size:.82rem;color:var(--ts)">¿Cuánto te costó?</label>
-              <div style="display:flex;gap:.6rem;margin-top:.4rem;align-items:center;flex-wrap:wrap">
-                <input type="number" id="cover-amt-${r.id}" placeholder="0.00" style="width:130px;padding:.45rem .7rem;border:1px solid var(--border);border-radius:var(--rs);font-family:inherit;font-size:.88rem">
-                <span style="font-size:.82rem;color:var(--ts)">${item?.currency||''}</span>
-                <button class="btn btn-primary" style="width:auto;padding:.5rem 1rem;font-size:.88rem" onclick="acceptCoverRequest('${r.id}','${item?.id}','${item?.currency||''}','${item?.trip_id||r.trip_id}')">✓ Aceptar</button>
-                <button class="btn btn-secondary" style="width:auto;padding:.5rem 1rem;font-size:.88rem" onclick="rejectCoverRequest('${r.id}')">Rechazar</button>
-              </div>
+        if (r._type === 'contrib') {
+          const tripName = r.trips?.name || 'un viaje';
+          return `<div class="request-card" style="border-left-color:var(--amber)">
+            <div class="from">💸 ${escapeHtml(r.payer_name)} pagó por ti en <em>${escapeHtml(tripName)}</em></div>
+            <div class="detail">${cat ? cat.icon : ''} ${escapeHtml(item?.description || (cat ? cat.name : item?.category || ''))} · <strong>${Number(r.amount_owed).toLocaleString()} ${r.currency}</strong>${dateStr}</div>
+            <div style="margin-top:.7rem">
+              <button class="btn btn-primary" style="width:auto;padding:.5rem 1.1rem;font-size:.88rem" onclick="markContributionPaidFromRequests('${r.id}')">✓ Marcar como pagado</button>
             </div>
           </div>`;
         }
